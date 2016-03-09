@@ -36,6 +36,11 @@ def _zero_for_unvoiced(data):
     #Multiply by 0 the unvoiced components. HARDCODED
     return tuple((data[0]*data[-1],) + data[1:])
 
+def _clip_f0(data, ceil = 300.):
+	temp_var = data[0]
+	temp_var[temp_var>ceil] = ceil
+	return tuple((temp_var,) + data[1:])
+
 data_dir = os.environ['FUEL_DATA_PATH']
 data_dir = os.path.join(data_dir, 'blizzard/', 'full_standardize.npz')
 data_stats = numpy.load(data_dir)
@@ -51,26 +56,32 @@ std_spectrum = data_stats['std_spectrum']
 # std_voicing_str = data_stats['std_voicing_str']
 
 def blizzard_stream(which_sets = ('train',), batch_size = 64,
-					seq_length = 100, num_examples = None, sorting_mult = 20):
+					seq_length = 100, num_examples = None, sorting_mult = 20,
+					which_sources = None):
 	
+	all_sources = ('f0', 'f0_mask', 'mgc', 'spectrum',
+		           'transcripts', 'transcripts_mask', 'voicing_str',)
+
+	if not which_sources:
+		which_sources = ('f0', 'spectrum', 'start_flag', 'voiced')
+
 	dataset = Blizzard(which_sets = which_sets, filename = "mgc_blizzard_sentence.hdf5")
 	sorting_size = batch_size*sorting_mult
 
 	if not num_examples:
 		num_examples = sorting_size*(dataset.num_examples/sorting_size)
 
-	data_stream = dataset.get_example_stream()
-
 	data_stream = DataStream(dataset,
 	    		  iteration_scheme = ShuffledExampleScheme(num_examples))
 
 	data_stream = Mapping(data_stream, _remove_nans)
+	data_stream = Mapping(data_stream, _clip_f0)
 
 	# epoch_iterator = data_stream.get_epoch_iterator()
 
 	# means = []
 	# stds = []
-	# for i in range(7000):
+	# for i in range(num_examples):
 	# 	print i
 	# 	f0, mgc, spectrum, transcripts, voicing_str = next(epoch_iterator)
 
@@ -110,12 +121,12 @@ def blizzard_stream(which_sets = ('train',), batch_size = 64,
 	data_stream = Batch(data_stream, iteration_scheme=ConstantScheme(sorting_size))
 	data_stream = Mapping(data_stream, SortMapping(_length))
 	data_stream = Unpack(data_stream)
-	data_stream = Batch(data_stream, iteration_scheme = ConstantScheme(batch_size))
+	data_stream = Batch(data_stream, iteration_scheme=ConstantScheme(batch_size))
 
 	# Cut all sequences to the shape of the smallest one in the batch. So we will not need masks.
 
 	data_stream = Padding(data_stream)
-	data_stream = FilterSources(data_stream, ('f0', 'f0_mask', 'mgc', 'spectrum', 'transcripts', 'transcripts_mask', 'voicing_str',))
+	data_stream = FilterSources(data_stream, all_sources)
 	data_stream = Mapping(data_stream, _equalize_length)
 	data_stream = FilterSources(data_stream, ('f0', 'spectrum', 'transcripts', 'transcripts_mask', 'voicing_str'))
 	data_stream = Mapping(data_stream, _transpose)
@@ -139,10 +150,9 @@ def blizzard_stream(which_sets = ('train',), batch_size = 64,
 	data_stream = Mapping(data_stream, _zero_for_unvoiced)
 	data_stream = ForceFloatX(data_stream)
 
-	data_stream = FilterSources(data_stream, ('f0', 'spectrum', 'start_flag', 'voiced'))
+	data_stream = FilterSources(data_stream, which_sources)
 
 	return data_stream
-
 
 if __name__ == "__main__":
 	train_stream = blizzard_stream(batch_size = 5, sorting_mult = 2)

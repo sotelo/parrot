@@ -65,7 +65,7 @@ floatX = theano.config.floatX
 save_dir = os.environ['RESULTS_DIR']
 save_dir = os.path.join(save_dir,'blizzard/')
 
-experiment_name = "baseline_sp"
+experiment_name = "baseline_sp_no_fb_new_f0"
 
 #################
 # Prepare dataset
@@ -109,7 +109,7 @@ dims_theta = [hidden_size_recurrent] + \
 mlp_x = MLP(activations = activations_x,
             dims = dims_x)
 
-feedback = DeepTransitionFeedback(mlp = mlp_x)
+#feedback = DeepTransitionFeedback(mlp = mlp_x)
 
 transition = [GatedRecurrent(dim=hidden_size_recurrent, 
                    name = "gru_{}".format(i) ) for i in range(depth_recurrent)]
@@ -120,6 +120,9 @@ transition = RecurrentStack( transition,
 mlp_theta = MLP( activations = activations_theta,
              dims = dims_theta)
 
+# dims_theta = [hidden_size_recurrent, hidden_size_mlp_theta]
+# mlp_theta = MLP(activations = [Identity()], dims = dims_theta)
+
 emitter = SPF0Emitter(mlp = mlp_theta,
                       name = "emitter")
 
@@ -128,7 +131,7 @@ readout = Readout(
     readout_dim = hidden_size_recurrent,
     source_names =source_names,
     emitter=emitter,
-    feedback_brick = feedback,
+    #feedback_brick = feedback,
     name="readout")
 
 generator = SequenceGenerator(readout=readout, 
@@ -158,6 +161,9 @@ cost.name = "nll"
 cg = ComputationGraph(cost)
 
 model = Model(cost)
+
+# from theano import function
+# function([f0, sp, start_flag, voiced], cost)(*x_tr)
 
 transition_matrix = VariableFilter(
             theano_name_regex="state_to_state")(cg.parameters)

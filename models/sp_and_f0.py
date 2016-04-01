@@ -27,12 +27,12 @@ from blocks.graph import ComputationGraph
 from blocks.initialization import Constant, IsotropicGaussian
 from blocks.main_loop import MainLoop
 from blocks.model import Model
-from blocks.utils import shared_floatx_zeros, shared_floatx
+from blocks.utils import shared_floatx_zeros, shared_floatx, shared_floatx_zeros, shared_floatx_zeros_matching
 
 from theano import tensor, config, function
 
 from play.bricks.custom import (DeepTransitionFeedback, GMMEmitter,
-                                SPF0Emitter)
+                                SPF0Emitter2)
 
 from play.extensions import Flush, LearningRateSchedule, TimedFinish
 from play.extensions.plot import Plot
@@ -56,6 +56,8 @@ depth_theta = 4
 hidden_size_mlp_theta = 2000
 hidden_size_recurrent = 2000
 
+weight_noise = True
+
 depth_recurrent = 3
 lr = 2e-4
 #lr = shared_floatx(lr, "learning_rate")
@@ -65,7 +67,9 @@ floatX = theano.config.floatX
 save_dir = os.environ['RESULTS_DIR']
 save_dir = os.path.join(save_dir,'blizzard/')
 
-experiment_name = "baseline_sp_no_fb_new_f0"
+experiment_name = "baseline_sp_no_fb_gmm_f0_wn"
+
+load_params = "baseline_sp_no_fb_gmm_f0"
 
 #################
 # Prepare dataset
@@ -123,7 +127,7 @@ mlp_theta = MLP( activations = activations_theta,
 # dims_theta = [hidden_size_recurrent, hidden_size_mlp_theta]
 # mlp_theta = MLP(activations = [Identity()], dims = dims_theta)
 
-emitter = SPF0Emitter(mlp = mlp_theta,
+emitter = SPF0Emitter2(mlp = mlp_theta,
                       name = "emitter")
 
 source_names = [name for name in transition.apply.states if 'states' in name]
@@ -156,11 +160,15 @@ states = {name: shared_floatx_zeros((batch_size, hidden_size_recurrent))
 cost_matrix = generator.cost_matrix(x, **states)
 
 cost = cost_matrix.mean() + 0.*start_flag
-cost.name = "nll"
 
 cg = ComputationGraph(cost)
 
 model = Model(cost)
+
+simple_cost = cost
+simple_cost.name = "nll"
+
+parameters = cg.parameters
 
 # from theano import function
 # function([f0, sp, start_flag, voiced], cost)(*x_tr)
@@ -169,6 +177,53 @@ transition_matrix = VariableFilter(
             theano_name_regex="state_to_state")(cg.parameters)
 for matr in transition_matrix:
     matr.set_value(0.98*numpy.eye(hidden_size_recurrent, dtype=floatX))
+
+if load_params:
+  from blocks.serialization import load_parameters
+  with open(save_dir+"pkl/best_"+load_params+".tar", 'rb') as src:
+    loaded_parameters = load_parameters(src)
+
+  for k in loaded_parameters.keys():
+    if '/generator/readout/emitter/mlp/' in k:
+      v = loaded_parameters.pop(k)
+      loaded_parameters[k.replace('/generator/readout/emitter/mlp/',
+                  '/generator/readout/emitter/gmmmlp/mlp/') ] = v
+
+  model.set_parameter_values(loaded_parameters)
+
+if weight_noise:
+  from theano.sandbox.rng_mrg import MRG_RandomStreams
+  from blocks.roles import add_role, PARAMETER
+
+  def apply_noise(computation_graph, variables, level = 0.075, seed=None):
+      if not seed:
+          seed = 1
+      rng = MRG_RandomStreams(seed)
+
+      replace = {}
+      variances = []
+      for nvar, variable in enumerate(variables):
+        variance = shared_floatx_zeros_matching(variable, name = "variance_" + str(nvar))
+        variance.set_value(variance.get_value() + numpy.log(level**2))
+        variances.append(variance)
+        replace[variable] = (variable +
+            rng.normal(variable.shape)*tensor.sqrt(tensor.exp(variance) + 1e-5))
+        add_role(variance, PARAMETER)
+
+      return computation_graph.replace(replace), variances
+
+  cost_with_noise_cg, variances = apply_noise(cg, cg.parameters, level = 0.075)
+  cost = cost_with_noise_cg.outputs[0]
+
+  prior = 0.075**2
+
+  # for variance in variances:
+  #   cost += (0.5*(tensor.exp(variance)/prior - variance)).sum()
+
+  cost.name = 'reg_cost'
+  model = Model(cost)
+
+  parameters += variances
 
 from play.utils import regex_final_value
 extra_updates = []
@@ -182,37 +237,7 @@ for name, var in states.items():
 # Monitoring vars
 #################
 
-mean_data = x.mean(axis = (0,1)).copy(name="data_mean")
-sigma_data = x.std(axis = (0,1)).copy(name="data_std")
-max_data = x.max(axis = (0,1)).copy(name="data_max")
-min_data = x.min(axis = (0,1)).copy(name="data_min")
-
-monitoring_variables = [cost]
-
-data_monitoring = [mean_data, sigma_data,
-                     max_data, min_data]
-
-readout = generator.readout
-readouts = VariableFilter( applications = [readout.readout],
-    name_regex = "output")(cg.variables)[0]
-
-mu, sigma, binary = readout.emitter.components(readouts)
-
-min_sigma = sigma.min().copy(name="sigma_min")
-mean_sigma = sigma.mean().copy(name="sigma_mean")
-max_sigma = sigma.max().copy(name="sigma_max")
-
-min_mu = mu.min().copy(name="mu_min")
-mean_mu = mu.mean().copy(name="mu_mean")
-max_mu = mu.max().copy(name="mu_max")
-
-min_binary = binary.min().copy(name="binary_min")
-mean_binary = binary.mean().copy(name="binary_mean")
-max_binary = binary.max().copy(name="binary_max")
-
-data_monitoring += [mean_sigma, min_sigma,
-    min_mu, max_mu, mean_mu, max_sigma,
-    mean_binary, min_binary, max_binary]
+monitoring_variables = [simple_cost]
 
 #################
 # Algorithm
@@ -222,7 +247,7 @@ n_batches = 1
 n_batches_valid = 200
 
 algorithm = GradientDescent(
-    cost=cost, parameters=cg.parameters,
+    cost=cost, parameters=parameters,
     step_rule=CompositeRule([StepClipping(10.0), Adam(lr)]))
 algorithm.add_updates(extra_updates)
 lr = algorithm.step_rule.components[1].learning_rate

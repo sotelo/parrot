@@ -28,11 +28,13 @@ alpha = 0.4
 stage = 2
 gamma = -1.0 / stage
 
+data_hidden_states = True
+
 save_dir = os.environ['RESULTS_DIR']
 save_dir = os.path.join(save_dir,'blizzard/')
 
-experiment_name = "baseline_sp_no_feedback"
-num_sample = "06"
+experiment_name = "baseline_sp_simplest_gmm_f0"
+num_sample = "01"
 
 print "Sampling: " + experiment_name
 
@@ -51,8 +53,7 @@ from blocks.bricks.sequence_generators import (
 from blocks.bricks.recurrent import LSTM, RecurrentStack, GatedRecurrent
 
 from play.bricks.custom import (DeepTransitionFeedback, GMMEmitter,
-                                SPF0Emitter)
-
+                                SPF0Emitter2)
 
 batch_size = 64 #for tpbtt
 frame_size = 257 + 2
@@ -90,13 +91,13 @@ transition = [GatedRecurrent(dim=hidden_size_recurrent,
 transition = RecurrentStack( transition,
             name="transition", skip_connections = True)
 
-# dims_theta = [hidden_size_recurrent, hidden_size_mlp_theta]
-# mlp_theta = MLP(activations = [Identity()], dims = dims_theta)
+dims_theta = [hidden_size_recurrent, hidden_size_mlp_theta]
+mlp_theta = MLP(activations = [Identity()], dims = dims_theta)
 
-mlp_theta = MLP( activations = activations_theta,
-             dims = dims_theta)
+# mlp_theta = MLP( activations = activations_theta,
+#              dims = dims_theta)
 
-emitter = SPF0Emitter(mlp = mlp_theta,
+emitter = SPF0Emitter2(mlp = mlp_theta,
                       name = "emitter")
 
 source_names = [name for name in transition.apply.states if 'states' in name]
@@ -114,7 +115,7 @@ generator = SequenceGenerator(readout=readout,
 #######################################
 
 steps = 2048
-n_samples = 10
+n_samples = batch_size
 
 from blocks.utils import shared_floatx_zeros, shared_floatx
 
@@ -154,7 +155,7 @@ for k in parameters2.keys():
 	if '/generator/readout/emitter/mlp/' in k:
 		v = parameters2.pop(k)
 		parameters2[k.replace('/generator/readout/emitter/mlp/',
-							  '/generator/readout/emitter/gmm_emitter/gmmmlp/mlp/') ] = v
+							  '/generator/readout/emitter/gmmmlp/mlp/') ] = v
 
 model.set_parameter_values(parameters2)
 
@@ -166,13 +167,33 @@ model.set_parameter_values(parameters2)
 #generator.generate(n_steps=steps, batch_size=n_samples, iterate=True, **states)
 
 #states = {}
-sample = ComputationGraph(generator.generate(n_steps=steps, 
-    batch_size=n_samples, iterate=True))
+
+if data_hidden_states:
+
+	from parrot.datasets.blizzard import blizzard_stream
+	from play.utils import regex_final_value
+	from blocks.filter import VariableFilter
+
+	train_stream = blizzard_stream(('train',), batch_size, seq_length = 500)
+	extra_updates = []
+	for name, var in states.items():
+	  update = VariableFilter(theano_name_regex=regex_final_value(name)
+	                  )(cg.auxiliary_variables)[0]
+	  extra_updates.append((var, update))
+
+	from theano import function
+	x_tr = next(train_stream.get_epoch_iterator())
+	function([f0, sp, start_flag, voiced], [], updates = extra_updates, on_unused_input='warn')(*x_tr)
+
+sample = ComputationGraph(
+	generator.generate(n_steps=steps,
+		batch_size=n_samples,
+		iterate=True, **states))
 sample_fn = sample.get_theano_function()
 
 outputs_bp = sample_fn()[-2]
 
-for this_sample in range(n_samples):
+for this_sample in range(10):
 	print "Iteration: ", this_sample
 	outputs = outputs_bp
 
@@ -196,7 +217,7 @@ for this_sample in range(n_samples):
 	print sampled_f0.min(), sampled_f0.max()
 
 	f, axarr = pyplot.subplots(2, sharex=True)
-	f.set_size_inches(100,35)
+	f.set_size_inches(10,3.5)
 	axarr[0].imshow(outputs.T)
 	#axarr[0].colorbar()
 	axarr[0].invert_yaxis()
@@ -226,7 +247,7 @@ for this_sample in range(n_samples):
 	outputs[outputs<-2.0992377] = -2.0992377
 
 	f, axarr = pyplot.subplots(2, sharex=True)
-	f.set_size_inches(100,35)
+	f.set_size_inches(10,3.5)
 	axarr[0].imshow(outputs.T)
 	#axarr[0].colorbar()
 	axarr[0].invert_yaxis()

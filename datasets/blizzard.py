@@ -1,15 +1,18 @@
 import os
 
 from fuel.schemes import ConstantScheme, ShuffledExampleScheme
-from fuel.transformers import Batch, SortMapping, Unpack, Padding
 from fuel.transformers import (
-    Mapping, FilterSources, ForceFloatX, ScaleAndShift)
+    AgnosticSourcewiseTransformer, Batch, FilterSources, ForceFloatX,
+    Mapping, Padding, ScaleAndShift, SortMapping, Unpack)
 from fuel.streams import DataStream
 
 from play.toy.segment_transformer import SegmentSequence
 from play.datasets.blizzard import Blizzard
 
 import numpy
+
+from utils import (
+    mean_f0, mean_mgc, mean_spectrum, std_f0, std_mgc, std_spectrum)
 
 
 def _length(data):
@@ -35,7 +38,7 @@ def _equalize_length(data):
 
 
 def _transpose(data):
-    return tuple([data_.swapaxes(0, 1) for data_ in data])
+    return data.swapaxes(0, 1)
 
 
 def _is_nonzero(data):
@@ -56,19 +59,30 @@ data_dir = os.environ['FUEL_DATA_PATH']
 data_dir = os.path.join(data_dir, 'blizzard/', 'full_standardize.npz')
 data_stats = numpy.load(data_dir)
 
-mean_f0 = data_stats['mean_f0']
-mean_mgc = data_stats['mean_mgc']
-mean_spectrum = data_stats['mean_spectrum']
-mean_voicing_str = data_stats['mean_voicing_str']
 
-std_f0 = data_stats['std_f0']
-std_mgc = data_stats['std_mgc']
-std_spectrum = data_stats['std_spectrum']
-std_voicing_str = data_stats['std_voicing_str']
+class SourceMapping(AgnosticSourcewiseTransformer):
+    """Apply a function to a subset of sources.
+    Similar to the Mapping transformer but for a subset of sources.
+    It will apply the same function to each source.
+    Parameters
+    ----------
+    mapping : callable
+    """
 
+    def __init__(self, data_stream, mapping, **kwargs):
+        """Initialization.
+        Parameters:
+            data_stream: DataStream
+            mapping: callable object
+        """
+        self.mapping = mapping
+        if data_stream.axis_labels:
+            kwargs.setdefault('axis_labels', data_stream.axis_labels.copy())
+        super(SourceMapping, self).__init__(
+            data_stream, data_stream.produces_examples, **kwargs)
 
-def compute_std_values():
-    return 1
+    def transform_any_source(self, source_data, _):
+        return numpy.asarray(self.mapping(source_data))
 
 
 def blizzard_stream(which_sets=('train',), batch_size=64,
@@ -80,7 +94,7 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
 
     if not which_sources:
         # which_sources = ('f0', 'spectrum', 'start_flag', 'voiced')
-        which_sources = ('f0', 'spectrum', 'start_flag',
+        which_sources = ('f0', 'f0_mask', 'spectrum', 'start_flag',
                          'voiced', 'transcripts', 'transcripts_mask')
 
     dataset = Blizzard(
@@ -152,14 +166,16 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     data_stream = Mapping(data_stream, _equalize_length)
     data_stream = FilterSources(
         data_stream,
-        ('f0', 'mgc', 'spectrum', 'transcripts',
+        ('f0', 'f0_mask', 'mgc', 'spectrum', 'transcripts',
          'transcripts_mask', 'voicing_str'))
-    data_stream = Mapping(data_stream, _transpose)
+    data_stream = SourceMapping(
+        data_stream, _transpose,
+        which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'))
     data_stream = SegmentSequence(
         data_stream,
-        seq_length,
+        seq_length + 1,
         return_last=False,
-        which_sources=('f0', 'mgc', 'spectrum', 'voicing_str'),
+        which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'),
         add_flag=True,
         share_value=True)
 
@@ -185,18 +201,17 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
         which_sources=('mgc',))
 
     data_stream = Mapping(data_stream, _zero_for_unvoiced)
-    data_stream = ForceFloatX(data_stream)
+    data_stream = ForceFloatX(
+        data_stream,
+        which_sources=('f0', 'f0_mask', 'spectrum', 'start_flag',
+                       'voiced', 'transcripts_mask'))
 
     data_stream = FilterSources(data_stream, which_sources)
-
     return data_stream
 
 if __name__ == "__main__":
     train_stream = blizzard_stream(batch_size=5, sorting_mult=2)
     print next(train_stream.get_epoch_iterator())
-
-    import ipdb
-    ipdb.set_trace()
 
 # maxs = []
 # percs = []

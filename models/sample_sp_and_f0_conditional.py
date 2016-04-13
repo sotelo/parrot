@@ -40,7 +40,7 @@ from play.extensions.plot import Plot
 import pysptk as SPTK
 from play.utils.mgc import mgcf02wav
 from scipy.io import wavfile
-from parrot.datasets.blizzard import mean_spectrum, mean_f0, std_spectrum, std_f0
+from datasets.blizzard import mean_spectrum, mean_f0, std_spectrum, std_f0
 
 from blocks.bricks.parallel import Fork
 
@@ -75,8 +75,8 @@ floatX = theano.config.floatX
 save_dir = os.environ['RESULTS_DIR']
 save_dir = os.path.join(save_dir,'blizzard/')
 
-experiment_name = "baseline_sp_no_fb_conditional_2"
-num_sample = "02"
+experiment_name = "baseline_sp_no_fb_conditional"
+num_sample = "03"
 
 n_steps = 2048
 
@@ -410,20 +410,29 @@ def sample_step(x_tm1, h1_tm1, h2_tm1, h3_tm1, k_tm1, w_tm1, ctx):
 
   x_t = emitter.emit(readout_t)
 
-  return x_t, h1_t, h2_t, h3_t, k_t, w_t, ss4
+  mu_t, sigma_t, coeff_t = emitter.gmm_emitter.components(readout_t)
 
-(sample_x, h1, h2, h3, k, w, phi), updates = theano.scan(
+  return x_t, h1_t, h2_t, h3_t, k_t, w_t, coeff_t, ss4, a_t
+
+(sample_x, h1, h2, h3, k, w, pi, phi, pi_att), updates = theano.scan(
     fn = sample_step,
     n_steps = n_steps,
     sequences = [],
     non_sequences = [context_oh],
-    outputs_info = [initial_x.eval(), initial_h1, initial_h2, initial_h3, initial_kappa, initial_w, None])
+    outputs_info = [initial_x.eval(), initial_h1, initial_h2, initial_h3,
+    initial_kappa, initial_w, None, None, None])
 
 phrase_mask = numpy.ones(phrase.shape, dtype = 'float32')
 
-x_sample, phi_sample = function([context, context_mask], [sample_x, phi], updates = updates)(phrase,phrase_mask)
+x_sample, pi_sample, phi_sample, pi_att_sample = function([context, context_mask], [sample_x, pi, phi, pi_att], updates = updates)(phrase,phrase_mask)
+
+pi_sample = pi_sample.swapaxes(0,1)
+phi_sample = phi_sample.swapaxes(0,1)
+pi_att_sample = pi_att_sample.swapaxes(0,1)[:,:,:,0]
 
 outputs_bp = x_sample
+
+# ipdb.set_trace()
 
 for this_sample in range(10):
   print "Iteration: ", this_sample
@@ -448,18 +457,18 @@ for this_sample in range(10):
 
   print sampled_f0.min(), sampled_f0.max()
 
-  f, axarr = pyplot.subplots(2, sharex=True)
-  f.set_size_inches(10,3.5)
-  axarr[0].imshow(outputs.T)
-  #axarr[0].colorbar()
-  axarr[0].invert_yaxis()
-  axarr[0].set_ylim(0,257)
-  axarr[0].set_xlim(0,2048)
-  axarr[1].plot(sampled_f0,linewidth=3)
-  axarr[0].set_adjustable('box-forced')
-  axarr[1].set_adjustable('box-forced')
-  pyplot.savefig(save_dir+"samples/best_"+experiment_name+num_sample+str(this_sample)+".png")
-  pyplot.close()
+  # f, axarr = pyplot.subplots(2, sharex=True)
+  # f.set_size_inches(10,3.5)
+  # axarr[0].imshow(outputs.T)
+  # #axarr[0].colorbar()
+  # axarr[0].invert_yaxis()
+  # axarr[0].set_ylim(0,257)
+  # axarr[0].set_xlim(0,2048)
+  # axarr[1].plot(sampled_f0,linewidth=3)
+  # axarr[0].set_adjustable('box-forced')
+  # axarr[1].set_adjustable('box-forced')
+  # pyplot.savefig(save_dir+"samples/best_"+experiment_name+num_sample+str(this_sample)+".png")
+  # pyplot.close()
 
   sampled_f0_corrected = sampled_f0
   sampled_f0_corrected[sampled_f0_corrected<0] = 0.
@@ -478,16 +487,21 @@ for this_sample in range(10):
   outputs[outputs>11.866405] = 11.866405
   outputs[outputs<-2.0992377] = -2.0992377
 
-  f, axarr = pyplot.subplots(2, sharex=True)
-  f.set_size_inches(10,3.5)
+  f, axarr = pyplot.subplots(5, sharex=True)
+  f.set_size_inches(10,8.5)
   axarr[0].imshow(outputs.T)
   #axarr[0].colorbar()
   axarr[0].invert_yaxis()
-  axarr[0].set_ylim(0,257)
-  axarr[0].set_xlim(0,2048)
+  axarr[0].set_ylim(0, 257)
+  axarr[0].set_xlim(0, 2048)
   axarr[1].plot(sampled_f0,linewidth=3)
   axarr[0].set_adjustable('box-forced')
   axarr[1].set_adjustable('box-forced')
+
+  axarr[2].imshow(pi_sample[this_sample].T, origin = 'lower', aspect = 'auto', interpolation = 'nearest')
+  axarr[3].imshow(phi_sample[this_sample].T, origin = 'lower', aspect = 'auto', interpolation = 'nearest')
+  axarr[4].imshow(pi_att_sample[this_sample].T, origin = 'lower', aspect = 'auto', interpolation = 'nearest')
+
   pyplot.savefig(save_dir+"samples/best_"+experiment_name+num_sample+str(this_sample)+"_scaled.png")
   pyplot.close()
 

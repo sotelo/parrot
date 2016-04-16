@@ -1,5 +1,5 @@
 from blocks.bricks import (
-    Identity, Initializable, Linear, Logistic, MLP, Random)
+    Initializable, Linear, Logistic, Random)
 from blocks.bricks.base import application
 from blocks.bricks.parallel import Fork
 from blocks.bricks.recurrent import GatedRecurrent
@@ -10,6 +10,10 @@ import numpy
 
 import theano
 from theano import tensor, function
+
+from utils import (
+    mean_f0, mean_spectrum, std_f0, std_spectrum,
+    spectrum_lower_limit, spectrum_upper_limit, min_voiced_lower_limit)
 
 floatX = theano.config.floatX
 
@@ -184,10 +188,10 @@ class F0Emitter(AbstractEmitter, Initializable, Random):
             const=const,
             name="f0_emitter")
 
-        self.binary = MLP(
-            activations=[Identity()],
-            dims=[input_dim, 1],
-            name="f0_emitter_binary")
+        self.binary = Linear(
+            input_dim=input_dim,
+            output_dim=1,
+            name='f0_emitter_binary')
 
         self.logistic = Logistic()
 
@@ -202,9 +206,12 @@ class F0Emitter(AbstractEmitter, Initializable, Random):
         f0_sample = self.f0_gmm.emit(readouts)
 
         # Clip to max value in dataset: 300
-        f0_sample = tensor.minimum(f0_sample, 9.1319074630737305)
-        # f0_sample = tensor.maximum(f0_sample, -3.9262674831125679)
-        f0_sample = tensor.maximum(f0_sample, -2.3679578304290771)
+        f0_sample = tensor.minimum(
+            f0_sample, (300. - mean_f0) / std_f0)
+
+        f0_sample = tensor.maximum(
+            f0_sample, (min_voiced_lower_limit - mean_f0) / std_f0)
+
         f0_sample = f0_sample * binary_sample
 
         return f0_sample, binary_sample
@@ -212,6 +219,7 @@ class F0Emitter(AbstractEmitter, Initializable, Random):
     @application
     def cost(self, readouts, f0, voiced):
         binary = self.binary.apply(readouts)
+        binary = self.logistic.apply(binary)
         binary = binary.flatten(ndim=binary.ndim - 1)
         c_b = tensor.xlogx.xlogy0(voiced, binary) + \
             tensor.xlogx.xlogy0(1 - voiced, 1 - binary)
@@ -730,3 +738,286 @@ class Parrot(Initializable):
             results[step] = new_x
 
         return results
+
+
+class SimpleParrot(Initializable):
+    def __init__(
+            self,
+            num_freq=257,
+            k=20,
+            k_f0=5,
+            rnn1_h_dim=400,
+            att_size=10,
+            num_letters=28,
+            readouts_dim=200,
+            sampling_bias=0.,
+            **kwargs):
+
+        super(SimpleParrot, self).__init__(**kwargs)
+
+        self.num_freq = num_freq
+        self.k = k
+        self.rnn1_h_dim = rnn1_h_dim
+        self.att_size = att_size
+        self.num_letters = num_letters
+        self.sampling_bias = sampling_bias
+        self.readouts_dim = readouts_dim
+        self.attention_mult = 1. / 20.
+
+        self.rnn1_cell1 = GatedRecurrent(dim=rnn1_h_dim, name='rnn1_cell1')
+
+        self.inp_to_h1 = Fork(
+            output_names=['rnn1_cell1_inputs', 'rnn1_cell1_gates'],
+            input_dim=num_freq + 2,
+            output_dims=[rnn1_h_dim, 2 * rnn1_h_dim],
+            name='inp_to_h1')
+
+        self.h1_to_readout = Linear(
+            input_dim=rnn1_h_dim,
+            output_dim=readouts_dim,
+            name='h1_to_readout')
+
+        self.h1_to_att = Fork(
+            output_names=['alpha', 'beta', 'kappa'],
+            input_dim=rnn1_h_dim,
+            output_dims=[att_size] * 3,
+            name='h1_to_att')
+
+        self.att_to_h1 = Fork(
+            output_names=['rnn1_cell1_inputs', 'rnn1_cell1_gates'],
+            input_dim=num_letters,
+            output_dims=[rnn1_h_dim, 2 * rnn1_h_dim],
+            name='att_to_h1')
+
+        self.att_to_readout = Linear(
+            input_dim=num_letters,
+            output_dim=readouts_dim,
+            name='att_to_readout')
+
+        self.f0_emitter = F0Emitter(
+            input_dim=readouts_dim,
+            k_f0=k_f0,
+            sampl_bias=sampling_bias)
+
+        self.spectrum_emitter = GMMEmitter(
+            input_dim=readouts_dim,
+            dim=num_freq,
+            k=k,
+            sampl_bias=sampling_bias)
+
+        self.children = [
+            self.rnn1_cell1,
+            self.inp_to_h1,
+            self.h1_to_readout,
+            self.h1_to_att,
+            self.att_to_h1,
+            self.att_to_readout,
+            self.f0_emitter,
+            self.spectrum_emitter]
+
+    def symbolic_input_variables(self):
+        f0 = tensor.matrix('f0')
+        voiced = tensor.matrix('voiced')
+        start_flag = tensor.scalar('start_flag')
+        spectrum = tensor.tensor3('spectrum')
+        transcripts = tensor.imatrix('transcripts')
+        transcripts_mask = tensor.matrix('transcripts_mask')
+        f0_mask = tensor.matrix('f0_mask')
+
+        return f0, f0_mask, voiced, spectrum, \
+            transcripts, transcripts_mask, start_flag
+
+    def initial_states(self, batch_size):
+        initial_h1 = shared_floatx_zeros((batch_size, self.rnn1_h_dim))
+        initial_kappa = shared_floatx_zeros((batch_size, self.att_size))
+        initial_w = shared_floatx_zeros((batch_size, self.num_letters))
+
+        return initial_h1, initial_kappa, initial_w
+
+    def symbolic_initial_states(self):
+        initial_h1 = tensor.matrix('initial_h1')
+        initial_h2 = tensor.matrix('initial_h1')
+        initial_h3 = tensor.matrix('initial_h1')
+        initial_kappa = tensor.matrix('initial_h1')
+        initial_w = tensor.matrix('initial_h1')
+
+        return initial_h1, initial_h2, initial_h3, initial_kappa, initial_w
+
+    def numpy_initial_states(self, batch_size):
+        initial_h1 = numpy.zeros((batch_size, self.rnn1_h_dim))
+        initial_kappa = numpy.zeros((batch_size, self.att_size))
+        initial_w = numpy.zeros((batch_size, self.num_letters))
+
+        return initial_h1, initial_kappa, initial_w
+
+    def compute_cost(
+            self, f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask,
+            start_flag, batch_size, seq_length):
+
+        f0_pr = tensor.shape_padright(f0)
+        voiced_pr = tensor.shape_padright(voiced)
+
+        data = tensor.concatenate([spectrum, f0_pr, voiced_pr], 2)
+
+        x = data[:-1]
+        # target = data[1:]
+        mask = f0_mask[1:]
+
+        target_f0 = f0[1:]
+        target_voiced = voiced[1:]
+        target_spectrum = spectrum[1:]
+
+        xinp_h1, xgat_h1 = self.inp_to_h1.apply(x)
+        transcripts_oh = one_hot(transcripts, self.num_letters) * \
+            tensor.shape_padright(transcripts_mask)
+
+        initial_h1, initial_kappa, initial_w = \
+            self.initial_states(batch_size)
+
+        # size of transcripts: = transcripts.shape[1]
+        u = tensor.shape_padleft(
+            tensor.arange(transcripts.shape[1], dtype=floatX), 2)
+
+        def step(xinp_h1_t, xgat_h1_t, h1_tm1, k_tm1, w_tm1, ctx):
+
+            attinp_h1, attgat_h1 = self.att_to_h1.apply(w_tm1)
+
+            h1_t = self.rnn1_cell1.apply(
+                xinp_h1_t + attinp_h1,
+                xgat_h1_t + attgat_h1, h1_tm1, iterate=False)
+
+            a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
+
+            a_t = tensor.exp(a_t)
+            b_t = tensor.exp(b_t)
+            k_t = k_tm1 + self.attention_mult * tensor.exp(k_t)
+
+            a_t = tensor.shape_padright(a_t)
+            b_t = tensor.shape_padright(b_t)
+            k_t_ = tensor.shape_padright(k_t)
+
+            # batch size X att size X len transcripts
+            ss4 = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+
+            # batch size X len transcripts X num letters
+            ss6 = tensor.shape_padright(ss4) * ctx
+            w_t = ss6.sum(axis=1)
+
+            return h1_t, k_t, w_t
+
+        (h1, kappa, w), scan_updates = theano.scan(
+            fn=step,
+            sequences=[xinp_h1, xgat_h1],
+            non_sequences=[transcripts_oh],
+            outputs_info=[initial_h1, initial_kappa, initial_w])
+
+        readouts = self.h1_to_readout.apply(h1) + \
+            self.att_to_readout.apply(w)
+
+        cost_f0 = self.f0_emitter.cost(readouts, target_f0, target_voiced)
+        cost_gmm = self.spectrum_emitter.cost(readouts, target_spectrum)
+
+        # cost = self.emitter.cost(readouts, target)
+        cost = cost_f0 + cost_gmm
+        cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
+        cost.name = 'nll'
+
+        updates = []
+        updates.append((
+            initial_h1,
+            tensor.switch(start_flag, 0. * initial_h1, h1[-1])))
+        updates.append((
+            initial_kappa,
+            tensor.switch(start_flag, 0. * initial_kappa, kappa[-1])))
+        updates.append((
+            initial_w,
+            tensor.switch(start_flag, 0. * initial_w, w[-1])))
+
+        return cost, scan_updates + updates
+
+    def sample_model_fun(self, context, context_mask, n_steps, num_samples):
+
+        initial_h1, initial_kappa, initial_w = \
+            self.initial_states(num_samples)
+
+        initial_x = numpy.zeros((num_samples, self.num_freq + 2))
+
+        context_oh = one_hot(context, self.num_letters) * \
+            tensor.shape_padright(context_mask)
+
+        u = tensor.shape_padleft(
+            tensor.arange(context.shape[1], dtype=floatX), 2)
+
+        def sample_step(x_tm1, h1_tm1, k_tm1, w_tm1, ctx):
+            xinp_h1_t, xgat_h1_t = self.inp_to_h1.apply(x_tm1)
+            attinp_h1, attgat_h1 = self.att_to_h1.apply(w_tm1)
+
+            h1_t = self.rnn1_cell1.apply(
+                xinp_h1_t + attinp_h1,
+                xgat_h1_t + attgat_h1, h1_tm1, iterate=False)
+
+            a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
+
+            a_t = tensor.exp(a_t)
+            b_t = tensor.exp(b_t)
+            k_t = k_tm1 + tensor.exp(k_t)
+
+            a_t = tensor.shape_padright(a_t)
+            b_t = tensor.shape_padright(b_t)
+            k_t_ = tensor.shape_padright(k_t)
+
+            # batch size X att size X len context
+            phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+
+            # batch size X len context X num letters
+            w_t = (tensor.shape_padright(phi_t) * ctx).sum(axis=1)
+
+            readout_t = self.h1_to_readout.apply(h1_t) + \
+                self.att_to_readout.apply(w_t)
+
+            f0_t, voiced_t = self.f0_emitter.emit(readout_t)
+            spectrum_t = self.spectrum_emitter.emit(readout_t)
+
+            # Experiment: Limit the values that can be sampled.
+            spectrum_t = tensor.minimum(
+                spectrum_t, (spectrum_upper_limit - mean_spectrum) /
+                std_spectrum)
+
+            spectrum_t = tensor.maximum(
+                spectrum_t, (spectrum_lower_limit - mean_spectrum) /
+                std_spectrum)
+
+            x_t = tensor.concatenate([spectrum_t, f0_t, voiced_t], 1)
+
+            mu_t, sigma_t, pi_t = self.spectrum_emitter.components(readout_t)
+
+            return x_t, h1_t, k_t, w_t, pi_t, phi_t, a_t
+
+        (sample_x, h1, k, w, pi, phi, pi_att), updates = theano.scan(
+            fn=sample_step,
+            n_steps=n_steps,
+            sequences=[],
+            non_sequences=[context_oh],
+            outputs_info=[
+                initial_x,
+                initial_h1,
+                initial_kappa,
+                initial_w,
+                None, None, None])
+
+        return sample_x, pi, phi, pi_att, updates
+
+    def sample_model(self, phrase, phrase_mask, num_samples, num_steps):
+
+        f0, f0_mask, voiced, spectrum, transcripts, \
+            transcripts_mask, start_flag = \
+            self.symbolic_input_variables()
+
+        sample_x, sample_pi, sample_phi, sample_pi_att, updates = \
+            self.sample_model_fun(
+                transcripts, transcripts_mask, num_steps, num_samples)
+
+        return function(
+            [transcripts, transcripts_mask],
+            [sample_x, sample_pi, sample_phi, sample_pi_att],
+            updates=updates)(phrase, phrase_mask)

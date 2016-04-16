@@ -11,7 +11,6 @@ import logging
 from blocks.serialization import load_parameters
 from blocks.model import Model
 from datasets.blizzard import blizzard_stream
-from models.model import Parrot
 from utils import char2code, sample_parse
 
 logging.basicConfig()
@@ -55,22 +54,30 @@ while True:
     if len(f0_tr) == args.num_steps:
         break
 
-from blocks import initialization
-w_init = initialization.IsotropicGaussian(0.01)
-b_init = initialization.Constant(0.)
-
-parrot = Parrot(
-    num_freq=saved_args.num_freq,
-    k=saved_args.num_mixture,
-    k_f0=saved_args.k_f0,
-    rnn1_h_dim=saved_args.rnn1_size,
-    rnn2_h_dim=saved_args.rnn2_size,
-    att_size=saved_args.size_attention,
-    num_letters=saved_args.num_letters,
-    sampling_bias=args.sampling_bias,
-    weights_init=w_init,
-    biases_init=b_init,
-    name='parrot')
+if saved_args.model == "simple":
+    from models.model import SimpleParrot as Parrot
+    parrot_args = {
+        'num_freq': saved_args.num_freq,
+        'k': saved_args.num_mixture,
+        'k_f0': saved_args.k_f0,
+        'rnn1_h_dim': saved_args.rnn1_size,
+        'att_size': saved_args.size_attention,
+        'num_letters': saved_args.num_letters,
+        'sampling_bias': 0.,
+        'name': 'parrot'}
+    parrot = Parrot(**parrot_args)
+else:
+    from models.model import Parrot
+    parrot = Parrot(
+        num_freq=saved_args.num_freq,
+        k=saved_args.num_mixture,
+        k_f0=saved_args.k_f0,
+        rnn1_h_dim=saved_args.rnn1_size,
+        rnn2_h_dim=saved_args.rnn2_size,
+        att_size=saved_args.size_attention,
+        num_letters=saved_args.num_letters,
+        sampling_bias=args.sampling_bias,
+        name='parrot')
 
 f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask, start_flag = \
     parrot.symbolic_input_variables()
@@ -109,9 +116,8 @@ if args.one_step_sampling:
     x_sample = results
 
 else:
-    x_sample = parrot.sample_model(
+    [x_sample, sampled_pi, sampled_phi, sampled_pi_att] = parrot.sample_model(
         phrase, phrase_mask, args.num_samples, args.num_steps)
-
 
 # Clean this code!
 
@@ -121,7 +127,8 @@ stage = 2
 gamma = -1.0 / stage
 num_sample = "02"
 
-from parrot.datasets.blizzard import mean_spectrum, mean_f0, std_spectrum, std_f0
+from parrot.datasets.blizzard import (
+    mean_spectrum, mean_f0, std_spectrum, std_f0)
 import pysptk as SPTK
 from play.utils.mgc import mgcf02wav
 from scipy.io import wavfile
@@ -131,91 +138,55 @@ import os
 matplotlib.use('Agg')
 from matplotlib import pyplot
 
-outputs_bp = x_sample
+
+sampled_spectrum = x_sample[:, :, :-2].swapaxes(0, 1)
+sampled_f0 = x_sample[:, :, -2].swapaxes(0, 1)
+sampled_voiced = x_sample[:, :, -1].swapaxes(0, 1)
+sampled_pi = sampled_pi.swapaxes(0, 1)
+sampled_phi = sampled_phi.swapaxes(0, 1)
+sampled_pi_att = sampled_pi_att.swapaxes(0, 1)[:, :, :, 0]
+
+sampled_spectrum = sampled_spectrum * std_spectrum + mean_spectrum
+sampled_f0 = sampled_f0 * std_f0 + mean_f0
+sampled_f0 = sampled_f0 * sampled_voiced
 
 for this_sample in range(10):
     print "Iteration: ", this_sample
-    outputs = outputs_bp
 
-    sampled_f0 = outputs[:, :, -2]
-    sampled_voiced = outputs[:, :, -1]
+    sample_spectrum = sampled_spectrum[this_sample]
+    sample_f0 = sampled_f0[this_sample]
 
-    print sampled_voiced.mean()
-    print sampled_f0.max(), sampled_f0.min()
-
-    outputs = outputs[:, :, :-2]
-    outputs = outputs * std_spectrum + mean_spectrum
-    outputs = outputs.swapaxes(0, 1)
-    outputs = outputs[this_sample]
-    print outputs.max(), outputs.min()
-
-    sampled_f0 = sampled_f0 * std_f0 + mean_f0
-    sampled_f0 = sampled_f0 * sampled_voiced
-    sampled_f0 = sampled_f0.swapaxes(0, 1)
-    sampled_f0 = sampled_f0[this_sample]
-
-    print sampled_f0.min(), sampled_f0.max()
-
-    f, axarr = pyplot.subplots(2, sharex=True)
-    f.set_size_inches(10, 3.5)
-    axarr[0].imshow(outputs.T)
-    # axarr[0].colorbar()
+    f, axarr = pyplot.subplots(5, sharex=True)
+    f.set_size_inches(10, 8.5)
+    axarr[0].imshow(sample_spectrum.T)
     axarr[0].invert_yaxis()
     axarr[0].set_ylim(0, 257)
     axarr[0].set_xlim(0, 2048)
-    axarr[1].plot(sampled_f0, linewidth=1)
+    axarr[1].plot(sample_f0, linewidth=1)
     axarr[0].set_adjustable('box-forced')
     axarr[1].set_adjustable('box-forced')
+
+    axarr[2].imshow(sampled_pi[this_sample].T, origin='lower',
+                    aspect='auto', interpolation='nearest')
+    axarr[3].imshow(sampled_phi[this_sample].T, origin='lower',
+                    aspect='auto', interpolation='nearest')
+    axarr[4].imshow(sampled_pi_att[this_sample].T, origin='lower',
+                    aspect='auto', interpolation='nearest')
+
     pyplot.savefig(
         args.save_dir + "samples/best_" + args.experiment_name +
         num_sample + str(this_sample) + ".png")
     pyplot.close()
 
-    sampled_f0_corrected = sampled_f0
-    sampled_f0_corrected[sampled_f0_corrected < 0] = 0.
-
-    mgc_sp = outputs
-    mgc_sp_test = numpy.hstack([mgc_sp, mgc_sp[:, ::-1][:, 1:-1]])
-    mgc_sp_test = mgc_sp_test.astype('float64').copy(order='C')
-
-    # mgc_reconstruct = numpy.apply_along_axis(SPTK.mgcep, 1, mgc_sp_test, order, alpha, gamma, eps = 0.0012, etype = 1, itype = 2)
-
-    # x_synth = mgcf02wav(mgc_reconstruct, sampled_f0_corrected)
-    # x_synth = .95 * x_synth/max(abs(x_synth)) * 2**15
-    # wavfile.write(save_dir+"samples/best_"+experiment_name+num_sample+str(this_sample)+ ".wav", 16000, x_synth.astype('int16'))
-
-    # Scaling
-
-    outputs[outputs > 11.866405] = 11.866405
-    outputs[outputs < -2.0992377] = -2.0992377
-
-    f, axarr = pyplot.subplots(2, sharex=True)
-    f.set_size_inches(10, 3.5)
-    axarr[0].imshow(outputs.T)
-    # axarr[0].colorbar()
-    axarr[0].invert_yaxis()
-    axarr[0].set_ylim(0, 257)
-    axarr[0].set_xlim(0, 2048)
-    axarr[1].plot(sampled_f0, linewidth=1)
-    axarr[0].set_adjustable('box-forced')
-    axarr[1].set_adjustable('box-forced')
-    pyplot.savefig(
-        args.save_dir + "samples/best_" + args.experiment_name +
-        num_sample + str(this_sample) + "_scaled.png")
-    pyplot.close()
-
-    mgc_sp = outputs
-    mgc_sp_test = numpy.hstack([mgc_sp, mgc_sp[:, ::-1][:, 1:-1]])
+    mgc_sp_test = numpy.hstack([sample_spectrum, sample_spectrum[:, ::-1][:, 1:-1]])
     mgc_sp_test = mgc_sp_test.astype('float64').copy(order='C')
     mgc_reconstruct = numpy.apply_along_axis(
         SPTK.mgcep, 1, mgc_sp_test, order, alpha, gamma,
         eps=0.0012, etype=1, itype=2)
-    x_synth = mgcf02wav(mgc_reconstruct, sampled_f0_corrected)
+    x_synth = mgcf02wav(mgc_reconstruct, sample_f0)
     x_synth = .95 * x_synth / max(abs(x_synth)) * 2**15
     wavfile.write(
         args.save_dir + "samples/best_" + args.experiment_name +
-        num_sample + str(this_sample) + "_scaled.wav", 16000,
+        num_sample + str(this_sample) + ".wav", 16000,
         x_synth.astype('int16'))
-
-
 print "End"

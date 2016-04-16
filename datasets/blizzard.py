@@ -2,7 +2,7 @@ import os
 
 from fuel.schemes import ConstantScheme, ShuffledExampleScheme
 from fuel.transformers import (
-    AgnosticSourcewiseTransformer, Batch, FilterSources, ForceFloatX,
+    AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
     Mapping, Padding, ScaleAndShift, SortMapping, Unpack)
 from fuel.streams import DataStream
 
@@ -12,7 +12,13 @@ from play.datasets.blizzard import Blizzard
 import numpy
 
 from utils import (
-    mean_f0, mean_mgc, mean_spectrum, std_f0, std_mgc, std_spectrum)
+    mean_f0, mean_mgc, mean_spectrum, std_f0, std_mgc, std_spectrum,
+    audio_len_lower_limit, audio_len_upper_limit, transcripts_len_lower_limit,
+    transcripts_len_upper_limit, attention_proportion_lower_limit,
+    attention_proportion_upper_limit, mgc_lower_limit, mgc_upper_limit,
+    spectrum_lower_limit, spectrum_upper_limit, voiced_proportion_lower_limit,
+    voiced_proportion_upper_limit, min_voiced_lower_limit,
+    min_voiced_upper_limit, max_voiced_lower_limit)
 
 
 def _length(data):
@@ -55,9 +61,41 @@ def _clip_f0(data, ceil=300.):
     temp_var[temp_var > ceil] = ceil
     return tuple((temp_var,) + data[1:])
 
-data_dir = os.environ['FUEL_DATA_PATH']
-data_dir = os.path.join(data_dir, 'blizzard/', 'full_standardize.npz')
-data_stats = numpy.load(data_dir)
+
+def _filter_blizzard(data):
+    f0, mgc, spectrum, transcripts, voicing_str = data
+
+    len_f0 = len(f0)
+    len_transcripts = len(transcripts)
+    attention_proportion = len_f0 / float(len_transcripts)
+    min_mgc = mgc.min(axis=0)
+    max_mgc = mgc.max(axis=0)
+    min_spectrum = spectrum.min(axis=0)
+    max_spectrum = spectrum.max(axis=0)
+    voiced_proportion = (f0 > 0).mean()
+    min_voiced = f0[f0 > 0].min()
+    max_voiced = f0[f0 > 0].max()
+
+    return len_f0 >= audio_len_lower_limit and \
+        len_f0 <= audio_len_upper_limit and \
+        len_transcripts >= transcripts_len_lower_limit and \
+        len_transcripts <= transcripts_len_upper_limit and \
+        attention_proportion >= attention_proportion_lower_limit and \
+        attention_proportion <= attention_proportion_upper_limit and \
+        (min_mgc >= mgc_lower_limit).all() and \
+        (max_mgc <= mgc_upper_limit).all() and \
+        (min_spectrum >= spectrum_lower_limit).all() and \
+        (max_spectrum <= spectrum_upper_limit).all() and \
+        voiced_proportion >= voiced_proportion_lower_limit and \
+        voiced_proportion <= voiced_proportion_upper_limit and \
+        min_voiced >= min_voiced_lower_limit and \
+        min_voiced <= min_voiced_upper_limit and \
+        max_voiced >= max_voiced_lower_limit and \
+        not numpy.isnan(voicing_str).any()
+
+
+def _chech_batch_size(data, batch_size):
+    return len(data[0]) == batch_size
 
 
 class SourceMapping(AgnosticSourcewiseTransformer):
@@ -67,6 +105,7 @@ class SourceMapping(AgnosticSourcewiseTransformer):
     Parameters
     ----------
     mapping : callable
+
     """
 
     def __init__(self, data_stream, mapping, **kwargs):
@@ -102,12 +141,14 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     sorting_size = batch_size * sorting_mult
 
     if not num_examples:
-        num_examples = sorting_size * (dataset.num_examples / sorting_size)
+        # num_examples = sorting_size * (dataset.num_examples / sorting_size)
+        num_examples = dataset.num_examples
 
     data_stream = DataStream(
         dataset, iteration_scheme=ShuffledExampleScheme(num_examples))
 
-    data_stream = Mapping(data_stream, _remove_nans)
+    data_stream = Filter(data_stream, _filter_blizzard)
+
     data_stream = Mapping(data_stream, _clip_f0)
 
     # epoch_iterator = data_stream.get_epoch_iterator()
@@ -161,6 +202,9 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     # Cut all sequences to the shape of the smallest one in the batch.
     # So we will not need masks.
 
+    data_stream = Filter(
+        data_stream, lambda x: _chech_batch_size(x, batch_size))
+
     data_stream = Padding(data_stream)
     data_stream = FilterSources(data_stream, all_sources)
     data_stream = Mapping(data_stream, _equalize_length)
@@ -210,17 +254,6 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     return data_stream
 
 if __name__ == "__main__":
-    train_stream = blizzard_stream(batch_size=5, sorting_mult=2)
+    train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
     print next(train_stream.get_epoch_iterator())
-
-# maxs = []
-# percs = []
-# epoch_iterator = train_stream.get_epoch_iterator()
-# for i in range(1000):
-#     f0 = next(epoch_iterator)[0]
-#     m = f0.max()
-#     p = numpy.percentile(f0[f0>0],99)
-#     print i, m, p
-#     maxs.append(m)
-#     percs.append(p)
-# 600 seems like a good number to cut f0
+    #import ipdb; ipdb.set_trace()

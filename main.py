@@ -13,7 +13,6 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 import cPickle
 from datasets.blizzard import blizzard_stream
-from models.model import Parrot
 from theano import function
 from utils import train_parse
 
@@ -39,18 +38,37 @@ valid_stream = blizzard_stream(
 
 f0_tr, f0_mask_tr, spectrum_tr, transcripts_tr, transcripts_mask_tr, start_flag_tr, voiced_tr = next(train_stream.get_epoch_iterator())
 
-parrot = Parrot(
-    num_freq=args.num_freq,
-    k=args.num_mixture,
-    k_f0=args.k_f0,
-    rnn1_h_dim=args.rnn1_size,
-    rnn2_h_dim=args.rnn2_size,
-    att_size=args.size_attention,
-    num_letters=args.num_letters,
-    sampling_bias=0.,
-    weights_init=w_init,
-    biases_init=b_init,
-    name='parrot')
+if args.model == "simple":
+    from models.model import SimpleParrot as Parrot
+
+    parrot_args = {
+        'num_freq': args.num_freq,
+        'k': args.num_mixture,
+        'k_f0': args.k_f0,
+        'rnn1_h_dim': args.rnn1_size,
+        'att_size': args.size_attention,
+        'num_letters': args.num_letters,
+        'sampling_bias': 0.,
+        'weights_init': w_init,
+        'biases_init': b_init,
+        'name': 'parrot'}
+else:
+    from models.model import Parrot
+
+    parrot_args = {
+        'num_freq': args.num_freq,
+        'k': args.num_mixture,
+        'k_f0': args.k_f0,
+        'rnn1_h_dim': args.rnn1_size,
+        'rnn2_h_dim': args.rnn2_size,
+        'att_size': args.size_attention,
+        'num_letters': args.num_letters,
+        'sampling_bias': 0.,
+        'weights_init': w_init,
+        'biases_init': b_init,
+        'name': 'parrot'}
+
+parrot = Parrot(**parrot_args)
 parrot.initialize()
 
 f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask, start_flag = \

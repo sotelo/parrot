@@ -478,10 +478,10 @@ class Parrot(Initializable):
             k_t_ = tensor.shape_padright(k_t)
 
             # batch size X att size X len transcripts
-            ss4 = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+            phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
 
             # batch size X len transcripts X num letters
-            ss6 = tensor.shape_padright(ss4) * ctx
+            ss6 = tensor.shape_padright(phi_t) * ctx
             w_t = ss6.sum(axis=1)
 
             # batch size X num letters
@@ -638,11 +638,10 @@ class Parrot(Initializable):
         k_t_ = tensor.shape_padright(k_t)
 
         # batch size X att size X len transcripts
-        ss4 = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+        phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
 
         # batch size X len transcripts X num letters
-        ss6 = tensor.shape_padright(ss4) * ctx
-        w_t = ss6.sum(axis=1)
+        w_t = (tensor.shape_padright(phi_t) * ctx).sum(axis=1)
 
         # batch size X num letters
         attinp_h2, attgat_h2 = self.att_to_h2.apply(w_t)
@@ -694,15 +693,16 @@ class Parrot(Initializable):
                 h1_tm1, iterate=False)
 
             x_t = self.spectrum_emitter.emit(h1_t)
+            mu_t, sigma_t, pi_t = self.spectrum_emitter.components(h1_t)
 
-            return x_t, h1_t
+            return x_t, h1_t, pi_t
 
-        (sample_spectrum, h1), updates = theano.scan(
+        (sample_spectrum, h1, pi), updates = theano.scan(
             fn=sample_step,
             n_steps=self.num_freq,
             sequences=[],
             non_sequences=[context_inputs, context_gates],
-            outputs_info=[rnn2_xtm1, initial_rnn2])
+            outputs_info=[rnn2_xtm1, initial_rnn2, None])
 
         sample_spectrum = sample_spectrum.reshape(
             (self.num_freq, num_samples)).swapaxes(0, 1)
@@ -718,7 +718,7 @@ class Parrot(Initializable):
 
         first_sample = function(
             [initial_x, transcripts, transcripts_mask],
-            new_x, updates=updates + extra_updates)
+            [new_x, pi, phi_t, a_t], updates=updates + extra_updates)
 
         return first_sample
 
@@ -897,10 +897,10 @@ class SimpleParrot(Initializable):
             k_t_ = tensor.shape_padright(k_t)
 
             # batch size X att size X len transcripts
-            ss4 = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+            phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
 
             # batch size X len transcripts X num letters
-            ss6 = tensor.shape_padright(ss4) * ctx
+            ss6 = tensor.shape_padright(phi_t) * ctx
             w_t = ss6.sum(axis=1)
 
             return h1_t, k_t, w_t

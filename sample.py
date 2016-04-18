@@ -18,6 +18,8 @@ logging.basicConfig()
 parser = sample_parse()
 args = parser.parse_args()
 
+args.experiment_name = 'more_capacity'
+
 with open(os.path.join(
         args.save_dir, 'config',
         args.experiment_name + '.pkl')) as f:
@@ -63,7 +65,7 @@ if saved_args.model == "simple":
         'rnn1_h_dim': saved_args.rnn1_size,
         'att_size': saved_args.size_attention,
         'num_letters': saved_args.num_letters,
-        'sampling_bias': 0.,
+        'sampling_bias': args.sampling_bias,
         'name': 'parrot'}
     parrot = Parrot(**parrot_args)
 else:
@@ -101,8 +103,15 @@ phrase_mask = numpy.ones(phrase.shape, dtype='float32')
 if args.one_step_sampling:
     one_step = parrot.sample_one_step(args.num_samples)
 
-    results = numpy.zeros(
+    x_sample = numpy.zeros(
         (args.num_steps, args.num_samples, parrot.num_freq + 2))
+
+    sampled_pi = numpy.zeros(
+        (args.num_steps, parrot.num_freq, args.num_samples, parrot.k))
+    sampled_phi = numpy.zeros(
+        (args.num_steps, args.num_samples, transcripts_tr.shape[1]))
+    sampled_pi_att = numpy.zeros(
+        (args.num_steps, args.num_samples, parrot.att_size))
 
     for num_step in range(args.num_steps):
         print "Step: ", num_step
@@ -111,13 +120,20 @@ if args.one_step_sampling:
             numpy.expand_dims(f0_tr[num_step], axis=1),
             numpy.expand_dims(voiced_tr[num_step], axis=1)], 1)
 
-        results[num_step] = one_step(
-            old_x, transcripts_tr, transcripts_mask_tr)
-    x_sample = results
+        this_x, this_pi, this_phi, this_pi_att = \
+            one_step(old_x, transcripts_tr, transcripts_mask_tr)
+
+        x_sample[num_step] = this_x
+        sampled_pi[num_step] = this_pi
+        sampled_phi[num_step] = this_phi
+        sampled_pi_att[num_step] = this_pi_att[:, :, 0]
+
+    sampled_pi = sampled_pi[:, 0]
 
 else:
     [x_sample, sampled_pi, sampled_phi, sampled_pi_att] = parrot.sample_model(
         phrase, phrase_mask, args.num_samples, args.num_steps)
+    sampled_pi_att = sampled_pi_att[:, :, :, 0]
 
 # Clean this code!
 
@@ -125,7 +141,7 @@ order = 34
 alpha = 0.4
 stage = 2
 gamma = -1.0 / stage
-num_sample = "02"
+num_sample = "03"
 
 from parrot.datasets.blizzard import (
     mean_spectrum, mean_f0, std_spectrum, std_f0)
@@ -137,14 +153,14 @@ import matplotlib
 import os
 matplotlib.use('Agg')
 from matplotlib import pyplot
-
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 sampled_spectrum = x_sample[:, :, :-2].swapaxes(0, 1)
 sampled_f0 = x_sample[:, :, -2].swapaxes(0, 1)
 sampled_voiced = x_sample[:, :, -1].swapaxes(0, 1)
 sampled_pi = sampled_pi.swapaxes(0, 1)
 sampled_phi = sampled_phi.swapaxes(0, 1)
-sampled_pi_att = sampled_pi_att.swapaxes(0, 1)[:, :, :, 0]
+sampled_pi_att = sampled_pi_att.swapaxes(0, 1)
 
 sampled_spectrum = sampled_spectrum * std_spectrum + mean_spectrum
 sampled_f0 = sampled_f0 * std_f0 + mean_f0
@@ -158,20 +174,35 @@ for this_sample in range(10):
 
     f, axarr = pyplot.subplots(5, sharex=True)
     f.set_size_inches(10, 8.5)
-    axarr[0].imshow(sample_spectrum.T)
-    axarr[0].invert_yaxis()
-    axarr[0].set_ylim(0, 257)
-    axarr[0].set_xlim(0, 2048)
-    axarr[1].plot(sample_f0, linewidth=1)
-    axarr[0].set_adjustable('box-forced')
-    axarr[1].set_adjustable('box-forced')
+    im0 = axarr[0].imshow(
+        sample_spectrum.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    # axarr[0].set_ylim(0, saved_args.num_freq)
+    # axarr[0].set_xlim(0, args.num_steps)
 
-    axarr[2].imshow(sampled_pi[this_sample].T, origin='lower',
-                    aspect='auto', interpolation='nearest')
-    axarr[3].imshow(sampled_phi[this_sample].T, origin='lower',
-                    aspect='auto', interpolation='nearest')
-    axarr[4].imshow(sampled_pi_att[this_sample].T, origin='lower',
-                    aspect='auto', interpolation='nearest')
+    axarr[1].plot(sample_f0, linewidth=1)
+    # axarr[0].set_adjustable('box-forced')
+    # axarr[1].set_adjustable('box-forced')
+
+    im2 = axarr[2].imshow(
+        sampled_pi[this_sample].T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    im3 = axarr[3].imshow(
+        sampled_phi[this_sample].T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    im4 = axarr[4].imshow(
+        sampled_pi_att[this_sample].T, origin='lower',
+        aspect='auto', interpolation='nearest')
+
+    cax0 = make_axes_locatable(axarr[0]).append_axes("right", size="1%", pad=0.05)
+    cax2 = make_axes_locatable(axarr[2]).append_axes("right", size="1%", pad=0.05)
+    cax3 = make_axes_locatable(axarr[3]).append_axes("right", size="1%", pad=0.05)
+    cax4 = make_axes_locatable(axarr[4]).append_axes("right", size="1%", pad=0.05)
+
+    pyplot.colorbar(im0, cax=cax0)
+    pyplot.colorbar(im2, cax=cax2)
+    pyplot.colorbar(im3, cax=cax3)
+    pyplot.colorbar(im4, cax=cax4)
 
     pyplot.savefig(
         args.save_dir + "samples/best_" + args.experiment_name +

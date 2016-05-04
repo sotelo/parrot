@@ -1,13 +1,13 @@
 import os
 
+from fuel import config
 from fuel.schemes import ConstantScheme, ShuffledExampleScheme
 from fuel.transformers import (
     AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
-    Mapping, Padding, ScaleAndShift, SortMapping, Unpack)
+    Mapping, Padding, ScaleAndShift, SortMapping, Transformer, Unpack)
 from fuel.streams import DataStream
 
-from play.toy.segment_transformer import SegmentSequence
-from play.datasets.blizzard import Blizzard
+from fuel.datasets import H5PYDataset
 
 import numpy
 
@@ -98,6 +98,104 @@ def _chech_batch_size(data, batch_size):
     return len(data[0]) == batch_size
 
 
+class SegmentSequence(Transformer):
+    """Segments the sequences in a batch.
+    This transformer is useful to do tbptt. All the sequences to segment
+    should have the time dimension as their first dimension.
+    Parameters
+    ----------
+    data_stream : instance of :class:`DataStream`
+        The wrapped data stream.
+    seq_size : int
+        maximum size of the resulting sequences.
+    which_sources : tuple of str, optional
+        sequences to segment
+    add_flag : bool, optional
+        add a flag indicating the beginning of a new sequence.
+    flag_name : str, optional
+        name of the source for the flag
+    min_size : int, optional
+        smallest possible sequence length for the last cut
+    return_last : bool, optional
+        return the last cut of the sequence, which might be different size
+    share_value : bool, optional
+        every cut will share the first value with the last value of past cut
+    """
+
+    def __init__(self,
+                 data_stream,
+                 seq_size=100,
+                 which_sources=None,
+                 add_flag=False,
+                 flag_name=None,
+                 min_size=10,
+                 return_last=True,
+                 share_value=False,
+                 **kwargs):
+
+        super(SegmentSequence, self).__init__(
+            data_stream=data_stream,
+            produces_examples=data_stream.produces_examples,
+            **kwargs)
+
+        if which_sources is None:
+            which_sources = data_stream.sources
+        self.which_sources = which_sources
+
+        self.seq_size = seq_size
+        self.step = 0
+        self.data = None
+        self.len_data = None
+        self.add_flag = add_flag
+        self.min_size = min_size
+        self.share_value = share_value
+
+        if not return_last:
+            self.min_size += self.seq_size
+
+        if flag_name is None:
+            flag_name = u"start_flag"
+
+        self.flag_name = flag_name
+
+    @property
+    def sources(self):
+        return self.data_stream.sources + ((self.flag_name,)
+                                           if self.add_flag else ())
+
+    def get_data(self, request=None):
+        flag = 0
+
+        if self.data is None:
+            self.data = next(self.child_epoch_iterator)
+            idx = self.sources.index(self.which_sources[0])
+            self.len_data = self.data[idx].shape[0]
+
+        segmented_data = list(self.data)
+
+        for source in self.which_sources:
+            idx = self.sources.index(source)
+            # Segment data:
+            segmented_data[idx] = self.data[idx][
+                self.step:(self.step + self.seq_size)]
+
+        self.step += self.seq_size
+
+        if self.share_value:
+            self.step -= 1
+
+        if self.step + self.min_size >= self.len_data:
+            self.data = None
+            self.len_data = None
+            self.step = 1
+            flag = 1
+
+        if self.add_flag:
+            segmented_data.append(flag)
+
+        return tuple(segmented_data)
+
+
 class SourceMapping(AgnosticSourcewiseTransformer):
     """Apply a function to a subset of sources.
     Similar to the Mapping transformer but for a subset of sources.
@@ -122,6 +220,16 @@ class SourceMapping(AgnosticSourcewiseTransformer):
 
     def transform_any_source(self, source_data, _):
         return numpy.asarray(self.mapping(source_data))
+
+
+class Blizzard(H5PYDataset):
+    def __init__(self, which_sets, filename='tbptt_blizzard.hdf5', **kwargs):
+        self.filename = filename
+        super(Blizzard, self).__init__(self.data_path, which_sets, **kwargs)
+
+    @property
+    def data_path(self):
+        return os.path.join(config.data_path[0], 'blizzard', self.filename)
 
 
 def blizzard_stream(which_sets=('train',), batch_size=64,

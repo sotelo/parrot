@@ -569,7 +569,6 @@ class Parrot(Initializable):
         # cost = self.emitter.cost(readouts, target)
         cost = cost_f0 + cost_gmm
         cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
-        cost.name = 'nll'
 
         updates = []
         updates.append((
@@ -762,7 +761,7 @@ class SimpleParrot(Initializable):
         self.num_letters = num_letters
         self.sampling_bias = sampling_bias
         self.readouts_dim = readouts_dim
-        self.attention_mult = 1. / 20.
+        self.attention_mult = 0.05
 
         self.rnn1_cell1 = GatedRecurrent(dim=rnn1_h_dim, name='rnn1_cell1')
 
@@ -850,6 +849,7 @@ class SimpleParrot(Initializable):
 
         return initial_h1, initial_kappa, initial_w
 
+    @application
     def compute_cost(
             self, f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask,
             start_flag, batch_size, seq_length):
@@ -920,7 +920,6 @@ class SimpleParrot(Initializable):
         # cost = self.emitter.cost(readouts, target)
         cost = cost_f0 + cost_gmm
         cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
-        cost.name = 'nll'
 
         updates = []
         updates.append((
@@ -935,6 +934,7 @@ class SimpleParrot(Initializable):
 
         return cost, scan_updates + updates
 
+    @application
     def sample_model_fun(self, context, context_mask, n_steps, num_samples):
 
         initial_h1, initial_kappa, initial_w = \

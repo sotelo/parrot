@@ -12,7 +12,7 @@ from blocks.graph import ComputationGraph
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 import cPickle
-from datasets.blizzard import blizzard_stream
+from blizzard import blizzard_stream
 from theano import function
 from utils import train_parse
 
@@ -39,7 +39,7 @@ valid_stream = blizzard_stream(
 f0_tr, f0_mask_tr, spectrum_tr, transcripts_tr, transcripts_mask_tr, start_flag_tr, voiced_tr = next(train_stream.get_epoch_iterator())
 
 if args.model == "simple":
-    from models.model import SimpleParrot as Parrot
+    from model import SimpleParrot as Parrot
 
     parrot_args = {
         'num_freq': args.num_freq,
@@ -53,7 +53,7 @@ if args.model == "simple":
         'biases_init': b_init,
         'name': 'parrot'}
 else:
-    from models.model import Parrot
+    from model import Parrot
 
     parrot_args = {
         'num_freq': args.num_freq,
@@ -78,6 +78,7 @@ cost, extra_updates = parrot.compute_cost(
     f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask,
     start_flag, args.batch_size, args.seq_length)
 
+cost.name = 'nll'
 # print function([
 #     f0, f0_mask, voiced, spectrum,
 #     transcripts, transcripts_mask, start_flag],

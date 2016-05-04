@@ -1,6 +1,24 @@
 import argparse
 import numpy
+import pysptk
+import subprocess
 import os
+import tempfile
+
+from scipy.io import wavfile
+from scipy.signal import lfilter
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+order = 34
+alpha = 0.4
+stage = 2
+gamma = -1.0 / stage
+
+h_filters = h_filters = numpy.load('h_filters.npy')
 
 save_dir = os.environ['RESULTS_DIR']
 if 'blizzard' not in save_dir:
@@ -46,6 +64,170 @@ char2code = {v: k for k, v in code2char.items()}
 unk_char = '<UNK>'
 
 
+def mgcf02wav(
+        mgc,
+        f0,
+        order=34,
+        shift_window=64,
+        pass_const=0.4,
+        mgcep_gamma=2,
+        gaussian=False):
+    mgc = mgc.astype('float32')
+    f0 = f0.astype('float32')
+
+    with tempfile.NamedTemporaryFile() as f:
+        mgc_fix_cmd = (
+            'mgc2mgclsp -m {} -a {} -c {} -s 16000 | '
+            'lspcheck -m {} -c -r 0.01 | '
+            'mgclsp2mgc -m {} -a {} -c {}').format(
+            order, pass_const, mgcep_gamma, order, order,
+            pass_const, mgcep_gamma)
+
+        p = subprocess.Popen(
+            mgc_fix_cmd, stdout=f, stdin=subprocess.PIPE, shell=True)
+        mgc_fix, stderr = p.communicate(mgc.ravel().tobytes())
+        f.file.flush()
+        f.file.close()
+
+        excitation_cmd = 'excite -p {}'.format(shift_window)
+        p = subprocess.Popen(
+            excitation_cmd,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            shell=True)
+        excitation, stderr = p.communicate(f0.tobytes())
+
+        synthesis_cmd = 'mglsadf -m {} -a {} -c {} -p {} {}'.format(
+            order, pass_const, mgcep_gamma, shift_window, f.name)
+        p = subprocess.Popen(
+            synthesis_cmd,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            shell=True)
+        stdout, stderr = p.communicate(excitation)
+        y = numpy.fromstring(stdout, dtype='float32')
+
+    return y
+
+
+def mgcf0sp2wav(
+        mgc,
+        f0,
+        voicing_str,
+        order=34,
+        shift_window=64,
+        pass_const=0.4,
+        mgcep_gamma=2,
+        gaussian=False):
+    mgc = mgc.astype('float32')
+    f0 = f0.astype('float32')
+
+    with tempfile.NamedTemporaryFile() as f:
+        mgc_fix_cmd = (
+            'mgc2mgclsp -m {} -a {} -c {} -s 16000 | '
+            'lspcheck -m {} -c -r 0.01 | '
+            'mgclsp2mgc -m {} -a {} -c {}').format(
+            order, pass_const, mgcep_gamma, order, order,
+            pass_const, mgcep_gamma)
+
+        p = subprocess.Popen(
+            mgc_fix_cmd, stdout=f, stdin=subprocess.PIPE, shell=True)
+        mgc_fix, stderr = p.communicate(mgc.ravel().tobytes())
+        f.file.flush()
+        f.file.close()
+
+        excitation = mixed_excitation(
+            f0, voicing_str, shift_window).astype('float32')
+
+        synthesis_cmd = 'mglsadf -m {} -a {} -c {} -p {} {}'.format(
+            order, pass_const, mgcep_gamma, shift_window, f.name)
+        p = subprocess.Popen(
+            synthesis_cmd,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            shell=True)
+        stdout, stderr = p.communicate(excitation.tobytes())
+        y = numpy.fromstring(stdout, dtype='float32')
+
+    return y
+
+
+def mixed_excitation(f0, voicing_str, hopsize):
+    exc_voiced = pysptk.excite(
+        f0.astype(numpy.float64), hopsize=hopsize, noise=False)
+    exc_unvoiced = 2 * numpy.random.rand(len(exc_voiced)) - 1
+
+    exc = numpy.zeros(len(exc_voiced))
+
+    for i in range(5):
+        h = h_filters[i]
+        x_v = lfilter(h, 1, exc_voiced)
+        x_uv = lfilter(h, 1, exc_unvoiced)
+
+        gain_v = numpy.zeros(len(exc_voiced))
+        gain_uv = numpy.zeros(len(exc_voiced))
+
+        str_v = voicing_str[:, i]
+        for k in range(len(str_v)):
+            if f0[k] > 0:
+                gain_v[k * hopsize:(k + 1) * hopsize] = str_v[k]
+                gain_uv[k * hopsize:(k + 1) * hopsize] = 1.0 - str_v[k]
+            else:
+                gain_v[k * hopsize:(k + 1) * hopsize] = 0.0
+                gain_uv[k * hopsize:(k + 1) * hopsize] = 1.0
+
+        exc += (gain_v * x_v + gain_uv * x_uv)
+
+    return exc
+
+
+def plot_sample(spectrum, f0, pi, phi, pi_att, fig_name):
+    f, axarr = pyplot.subplots(5, sharex=True)
+    f.set_size_inches(10, 8.5)
+    im0 = axarr[0].imshow(
+        spectrum.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    axarr[1].plot(f0, linewidth=1)
+
+    im2 = axarr[2].imshow(
+        pi.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    im3 = axarr[3].imshow(
+        phi.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    im4 = axarr[4].imshow(
+        pi_att.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+
+    cax0 = make_axes_locatable(axarr[0]).append_axes(
+        "right", size="1%", pad=0.05)
+    cax2 = make_axes_locatable(axarr[2]).append_axes(
+        "right", size="1%", pad=0.05)
+    cax3 = make_axes_locatable(axarr[3]).append_axes(
+        "right", size="1%", pad=0.05)
+    cax4 = make_axes_locatable(axarr[4]).append_axes(
+        "right", size="1%", pad=0.05)
+
+    pyplot.colorbar(im0, cax=cax0)
+    pyplot.colorbar(im2, cax=cax2)
+    pyplot.colorbar(im3, cax=cax3)
+    pyplot.colorbar(im4, cax=cax4)
+
+    pyplot.savefig(fig_name)
+    pyplot.close()
+
+
+def spectrum_to_audio(spectrum, f0, file_name):
+    spectrum = numpy.hstack([spectrum, spectrum[:, ::-1][:, 1:-1]])
+    spectrum = spectrum.astype('float64').copy(order='C')
+    mgc = numpy.apply_along_axis(
+        pysptk.mgcep, 1, spectrum, order, alpha, gamma,
+        eps=0.0012, etype=1, itype=2)
+    x_synth = mgcf02wav(mgc, f0)
+    x_synth = .95 * x_synth / max(abs(x_synth)) * 2**15
+    wavfile.write(file_name, 16000, x_synth.astype('int16'))
+
+
 def train_parse():
     """Parser for training arguments.
 
@@ -83,7 +265,7 @@ def train_parse():
                         help='number of samples')
     parser.add_argument('--num_steps', type=int, default=1000,
                         help='maximum size of each sample')
-    parser.add_argument('--model', type=str, default='full',
+    parser.add_argument('--model', type=str, default='simple',
                         help='type of model')
     # args = parser.parse_args()
     return parser
@@ -103,8 +285,10 @@ def sample_parse():
                         help='number of samples')
     parser.add_argument('--num_steps', type=int, default=2048,
                         help='maximum size of each sample')
+    parser.add_argument('--samples_name', type=str, default='sample',
+                        help='name to save the samples.')
     parser.add_argument('--save_dir', type=str,
-                        #default='./trained/',
+                        # default='./trained/',
                         default=save_dir,
                         help='save dir directory')
     parser.add_argument(
@@ -112,6 +296,4 @@ def sample_parse():
         default='WHAT SHOULD I SAY TO PROVE THAT I AM CAPABLE OF SPEAKING \
         HOW CAN I PROVE THAT I CAN BE TRUSTED TO SPEAK FOR YOU BY MYSELF',
         help='phrase to write')
-    parser.add_argument('--one_step_sampling', type=bool, default=False,
-                        help='sample only one step')
     return parser

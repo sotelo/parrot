@@ -750,6 +750,8 @@ class SimpleParrot(Initializable):
             num_letters=28,
             readouts_dim=200,
             sampling_bias=0.,
+            attention_type="graves",
+            attention_alignment=0.05,
             **kwargs):
 
         super(SimpleParrot, self).__init__(**kwargs)
@@ -762,6 +764,8 @@ class SimpleParrot(Initializable):
         self.sampling_bias = sampling_bias
         self.readouts_dim = readouts_dim
         self.attention_mult = 0.05
+        self.attention_type = attention_type
+        self.attention_alignment = attention_alignment
 
         self.rnn1_cell1 = GatedRecurrent(dim=rnn1_h_dim, name='rnn1_cell1')
 
@@ -888,7 +892,11 @@ class SimpleParrot(Initializable):
 
             a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
 
-            a_t = tensor.exp(a_t)
+            if self.attention_type == "softmax":
+                a_t = tensor.nnet.softmax(a_t)
+            else:
+                a_t = tensor.exp(a_t)
+
             b_t = tensor.exp(b_t)
             k_t = k_tm1 + self.attention_mult * tensor.exp(k_t)
 
@@ -896,12 +904,17 @@ class SimpleParrot(Initializable):
             b_t = tensor.shape_padright(b_t)
             k_t_ = tensor.shape_padright(k_t)
 
-            # batch size X att size X len transcripts
-            phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+            if self.attention_type == "softmax":
+                # numpy.sqrt(1/(2*numpy.pi)) is the weird number
+                phi_t = 0.3989422917366028 * tensor.sum(
+                    a_t * tensor.sqrt(b_t) *
+                    tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
+            else:
+                phi_t = tensor.sum(
+                    a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
 
             # batch size X len transcripts X num letters
-            ss6 = tensor.shape_padright(phi_t) * ctx
-            w_t = ss6.sum(axis=1)
+            w_t = (tensor.shape_padright(phi_t) * ctx).sum(axis=1)
 
             return h1_t, k_t, w_t
 
@@ -958,7 +971,11 @@ class SimpleParrot(Initializable):
 
             a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
 
-            a_t = tensor.exp(a_t)
+            if self.attention_type == "softmax":
+                a_t = tensor.nnet.softmax(a_t)
+            else:
+                a_t = tensor.exp(a_t)
+
             b_t = tensor.exp(b_t)
             k_t = k_tm1 + tensor.exp(k_t)
 
@@ -967,7 +984,14 @@ class SimpleParrot(Initializable):
             k_t_ = tensor.shape_padright(k_t)
 
             # batch size X att size X len context
-            phi_t = tensor.sum(a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+            if self.attention_type == "softmax":
+                # numpy.sqrt(1/(2*numpy.pi)) is the weird number
+                phi_t = 0.3989422917366028 * tensor.sum(
+                    a_t * tensor.sqrt(b_t) *
+                    tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
+            else:
+                phi_t = tensor.sum(
+                    a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
 
             # batch size X len context X num letters
             w_t = (tensor.shape_padright(phi_t) * ctx).sum(axis=1)

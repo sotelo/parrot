@@ -238,7 +238,7 @@ def train_parse():
                         help='name of the experiment.')
     parser.add_argument('--num_freq', type=int, default=257,
                         help='number of frequencies in the spectrum')
-    parser.add_argument('--rnn1_size', type=int, default=400,
+    parser.add_argument('--rnn1_size', type=int, default=1000,
                         help='size of time wise RNN hidden state')
     parser.add_argument('--rnn2_size', type=int, default=100,
                         help='size of frequency wise RNN hidden state')
@@ -261,13 +261,31 @@ def train_parse():
                         help='number of normal components for attention')
     parser.add_argument('--num_letters', type=int, default=28,
                         help='size of dictionary')
-    parser.add_argument('--num_samples', type=int, default=10,
-                        help='number of samples')
-    parser.add_argument('--num_steps', type=int, default=1000,
-                        help='maximum size of each sample')
     parser.add_argument('--model', type=str, default='simple',
                         help='type of model')
-    # args = parser.parse_args()
+    parser.add_argument('--platoon_port', type=int,
+                        default=None,
+                        help='port where platoon server is running')
+    parser.add_argument('--algorithm', type=str,
+                        default='adam',
+                        help='adam or adasecant')
+    parser.add_argument('--grad_clip', type=float,
+                        default=0.9,
+                        help='how much to clip the gradients. for adam is 10x')
+    parser.add_argument('--lr_schedule', type=bool,
+                        default=False,
+                        help='whether to use the learning rate schedule')
+    parser.add_argument('--load_experiment', type=str,
+                        default=None,
+                        help='name of the experiment that will be loaded')
+    parser.add_argument('--time_limit', type=float, default=None,
+                        help='time in hours that the model will run')
+    parser.add_argument('--attention_type', type=str,
+                        default='softmax',
+                        help='graves or softmax')
+    parser.add_argument('--attention_alignment', type=float,
+                        default=0.05,
+                        help='initial lengths of each attention step')
     return parser
 
 
@@ -288,7 +306,6 @@ def sample_parse():
     parser.add_argument('--samples_name', type=str, default='sample',
                         help='name to save the samples.')
     parser.add_argument('--save_dir', type=str,
-                        # default='./trained/',
                         default=save_dir,
                         help='save dir directory')
     parser.add_argument(

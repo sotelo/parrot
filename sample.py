@@ -44,6 +44,8 @@ if saved_args.model == "simple":
         'att_size': saved_args.size_attention,
         'num_letters': saved_args.num_letters,
         'sampling_bias': args.sampling_bias,
+        'attention_type': saved_args.attention_type,
+        'attention_alignment': saved_args.attention_alignment,
         'name': 'parrot'}
     parrot = Parrot(**parrot_args)
 else:

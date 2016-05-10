@@ -13,8 +13,8 @@ from blocks.model import Model
 from blizzard import blizzard_stream
 
 from utils import (
-    char2code, mean_f0, mean_spectrum, plot_sample, sample_parse,
-    std_f0, spectrum_to_audio, std_spectrum)
+    char2code, mean_f0, mean_mgc, mean_spectrum, plot_sample, sample_parse,
+    std_f0, spectrum_to_audio, std_mgc, std_spectrum)
 
 logging.basicConfig()
 
@@ -66,7 +66,7 @@ f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask, start_flag = \
 
 cost, extra_updates = parrot.compute_cost(
     f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask,
-    start_flag, saved_args.num_samples, saved_args.seq_length)
+    start_flag, args.num_samples, args.num_steps)
 
 model = Model(cost)
 model.set_parameter_values(parameters)
@@ -78,7 +78,8 @@ phrase = numpy.repeat(phrase, args.num_samples, axis=1).T
 phrase_mask = numpy.ones(phrase.shape, dtype='float32')
 
 [x_sample, sampled_pi, sampled_phi, sampled_pi_att] = parrot.sample_model(
-    phrase, phrase_mask, args.num_samples, args.num_steps)
+    phrase, phrase_mask, args.num_samples,
+    args.num_steps, saved_args.use_spectrum)
 sampled_pi_att = sampled_pi_att[:, :, :, 0]
 
 sampled_spectrum = x_sample[:, :, :-2].swapaxes(0, 1)
@@ -88,7 +89,14 @@ sampled_pi = sampled_pi.swapaxes(0, 1)
 sampled_phi = sampled_phi.swapaxes(0, 1)
 sampled_pi_att = sampled_pi_att.swapaxes(0, 1)
 
-sampled_spectrum = sampled_spectrum * std_spectrum + mean_spectrum
+if saved_args.use_spectrum:
+    mean_data = mean_spectrum
+    std_data = std_spectrum
+else:
+    mean_data = mean_mgc
+    std_data = std_mgc
+
+sampled_spectrum = sampled_spectrum * std_data + mean_data
 sampled_f0 = sampled_f0 * std_f0 + mean_f0
 sampled_f0 = sampled_f0 * sampled_voiced
 
@@ -108,7 +116,7 @@ for this_sample in range(args.num_samples):
             args.samples_name + '_' + str(this_sample) + ".png"))
 
     spectrum_to_audio(
-        spectrum, f0,
+        spectrum, f0, saved_args.use_spectrum,
         os.path.join(
             args.save_dir, 'samples',
             args.samples_name + '_' + str(this_sample) + ".wav"))

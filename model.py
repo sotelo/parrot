@@ -13,7 +13,8 @@ from theano import tensor, function
 
 from utils import (
     mean_f0, mean_spectrum, std_f0, std_spectrum,
-    spectrum_lower_limit, spectrum_upper_limit, min_voiced_lower_limit)
+    spectrum_lower_limit, spectrum_upper_limit, min_voiced_lower_limit,
+    mgc_upper_limit, mgc_lower_limit, mean_mgc, std_mgc)
 
 floatX = theano.config.floatX
 
@@ -391,7 +392,7 @@ class Parrot(Initializable):
         f0 = tensor.matrix('f0')
         voiced = tensor.matrix('voiced')
         start_flag = tensor.scalar('start_flag')
-        spectrum = tensor.tensor3('spectrum')
+        spectrum = tensor.tensor3('data')
         transcripts = tensor.imatrix('transcripts')
         transcripts_mask = tensor.matrix('transcripts_mask')
         f0_mask = tensor.matrix('f0_mask')
@@ -822,7 +823,7 @@ class SimpleParrot(Initializable):
         f0 = tensor.matrix('f0')
         voiced = tensor.matrix('voiced')
         start_flag = tensor.scalar('start_flag')
-        spectrum = tensor.tensor3('spectrum')
+        spectrum = tensor.tensor3('data')
         transcripts = tensor.imatrix('transcripts')
         transcripts_mask = tensor.matrix('transcripts_mask')
         f0_mask = tensor.matrix('f0_mask')
@@ -948,7 +949,9 @@ class SimpleParrot(Initializable):
         return cost, scan_updates + updates
 
     @application
-    def sample_model_fun(self, context, context_mask, n_steps, num_samples):
+    def sample_model_fun(
+            self, context, context_mask, n_steps, num_samples,
+            data_upper_limit, data_lower_limit, mean_data, std_data):
 
         initial_h1, initial_kappa, initial_w = \
             self.initial_states(num_samples)
@@ -1004,12 +1007,12 @@ class SimpleParrot(Initializable):
 
             # Experiment: Limit the values that can be sampled.
             spectrum_t = tensor.minimum(
-                spectrum_t, (spectrum_upper_limit - mean_spectrum) /
-                std_spectrum)
+                spectrum_t, (data_upper_limit - mean_data) /
+                std_data)
 
             spectrum_t = tensor.maximum(
-                spectrum_t, (spectrum_lower_limit - mean_spectrum) /
-                std_spectrum)
+                spectrum_t, (data_lower_limit - mean_data) /
+                std_data)
 
             x_t = tensor.concatenate([spectrum_t, f0_t, voiced_t], 1)
 
@@ -1031,7 +1034,19 @@ class SimpleParrot(Initializable):
 
         return sample_x, pi, phi, pi_att, updates
 
-    def sample_model(self, phrase, phrase_mask, num_samples, num_steps):
+    def sample_model(
+            self, phrase, phrase_mask, num_samples, num_steps, use_spectrum):
+
+        if use_spectrum:
+            data_upper_limit = spectrum_upper_limit
+            data_lower_limit = spectrum_lower_limit
+            mean_data = mean_spectrum
+            std_data = std_spectrum
+        else:
+            data_upper_limit = mgc_upper_limit
+            data_lower_limit = mgc_lower_limit
+            mean_data = mean_mgc
+            std_data = std_mgc
 
         f0, f0_mask, voiced, spectrum, transcripts, \
             transcripts_mask, start_flag = \
@@ -1039,7 +1054,8 @@ class SimpleParrot(Initializable):
 
         sample_x, sample_pi, sample_phi, sample_pi_att, updates = \
             self.sample_model_fun(
-                transcripts, transcripts_mask, num_steps, num_samples)
+                transcripts, transcripts_mask, num_steps, num_samples,
+                data_upper_limit, data_lower_limit, mean_data, std_data)
 
         return function(
             [transcripts, transcripts_mask],

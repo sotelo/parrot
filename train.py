@@ -34,11 +34,16 @@ print "Finished saving."
 w_init = initialization.IsotropicGaussian(0.01)
 b_init = initialization.Constant(0.)
 
+if args.use_spectrum:
+    print "Using smoothed spectrum."
+else:
+    print "Using MGC."
+
 train_stream = blizzard_stream(
-    ('train',), args.batch_size, args.seq_length)
+    ('train',), args.batch_size, args.seq_length, use_spectrum=args.use_spectrum)
 
 valid_stream = blizzard_stream(
-    ('valid',), args.batch_size, args.seq_length)
+    ('valid',), args.batch_size, args.seq_length, use_spectrum=args.use_spectrum)
 
 f0_tr, f0_mask_tr, spectrum_tr, transcripts_tr, transcripts_mask_tr, \
     start_flag_tr, voiced_tr = next(train_stream.get_epoch_iterator())

@@ -4,7 +4,7 @@ from fuel import config
 from fuel.schemes import ConstantScheme, ShuffledExampleScheme
 from fuel.transformers import (
     AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
-    Mapping, Padding, ScaleAndShift, SortMapping, Transformer, Unpack)
+    Mapping, Padding, Rename, ScaleAndShift, SortMapping, Transformer, Unpack)
 from fuel.streams import DataStream
 
 from fuel.datasets import H5PYDataset
@@ -100,6 +100,7 @@ def _chech_batch_size(data, batch_size):
 
 class SegmentSequence(Transformer):
     """Segments the sequences in a batch.
+
     This transformer is useful to do tbptt. All the sequences to segment
     should have the time dimension as their first dimension.
     Parameters
@@ -198,6 +199,7 @@ class SegmentSequence(Transformer):
 
 class SourceMapping(AgnosticSourcewiseTransformer):
     """Apply a function to a subset of sources.
+
     Similar to the Mapping transformer but for a subset of sources.
     It will apply the same function to each source.
     Parameters
@@ -208,6 +210,7 @@ class SourceMapping(AgnosticSourcewiseTransformer):
 
     def __init__(self, data_stream, mapping, **kwargs):
         """Initialization.
+
         Parameters:
             data_stream: DataStream
             mapping: callable object
@@ -234,22 +237,27 @@ class Blizzard(H5PYDataset):
 
 def blizzard_stream(which_sets=('train',), batch_size=64,
                     seq_length=100, num_examples=None, sorting_mult=20,
-                    which_sources=None):
+                    which_sources=None, use_spectrum=True):
 
     all_sources = ('f0', 'f0_mask', 'mgc', 'spectrum',
                    'transcripts', 'transcripts_mask', 'voicing_str',)
 
     if not which_sources:
-        # which_sources = ('f0', 'spectrum', 'start_flag', 'voiced')
-        which_sources = ('f0', 'f0_mask', 'spectrum', 'start_flag',
+        which_sources = ('f0', 'f0_mask', 'start_flag',
                          'voiced', 'transcripts', 'transcripts_mask')
+
+        if use_spectrum:
+            representation = 'spectrum'
+        else:
+            representation = 'mgc'
+
+        which_sources += (representation,)
 
     dataset = Blizzard(
         which_sets=which_sets, filename="mgc_blizzard_sentence.hdf5")
     sorting_size = batch_size * sorting_mult
 
     if not num_examples:
-        # num_examples = sorting_size * (dataset.num_examples / sorting_size)
         num_examples = dataset.num_examples
 
     data_stream = DataStream(
@@ -259,47 +267,6 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
 
     data_stream = Mapping(data_stream, _clip_f0)
 
-    # epoch_iterator = data_stream.get_epoch_iterator()
-
-    # means = []
-    # stds = []
-    # for i in range(num_examples):
-    #     print i
-    #     f0, mgc, spectrum, transcripts, voicing_str = next(epoch_iterator)
-
-    #     means.append([
-    #         f0[f0>0].mean(),
-    #         mgc.mean(axis=0),
-    #         spectrum.mean(axis=0),
-    #         voicing_str.mean(axis=0)
-    #         ])
-
-    #     stds.append([
-    #         f0[f0>0].std(),
-    #         mgc.std(axis=0),
-    #         spectrum.std(axis=0),
-    #         voicing_str.std(axis=0)
-    #         ])
-
-    # means = [numpy.array(mean_).mean(axis = 0) for mean_ in zip(*means)]
-    # stds = [numpy.array(std_).mean(axis = 0) for std_ in zip(*stds)]
-
-    # mean_f0, mean_mgc, mean_spectrum, mean_voicing_str = means
-    # std_f0, std_mgc, std_spectrum, std_voicing_str = stds
-
-    # data_dir = os.environ['FUEL_DATA_PATH']
-    # data_dir = os.path.join(data_dir, 'blizzard/', 'full_standardize.npz')
-
-    # numpy.savez(data_dir,
-    #     mean_f0 = mean_f0,
-    #     mean_mgc = mean_mgc,
-    #     mean_spectrum = mean_spectrum,
-    #     mean_voicing_str = mean_voicing_str,
-    #     std_f0 = std_f0,
-    #     std_mgc = std_mgc,
-    #     std_spectrum = std_spectrum,
-    #     std_voicing_str = std_voicing_str)
-
     data_stream = Batch(
         data_stream, iteration_scheme=ConstantScheme(sorting_size))
     data_stream = Mapping(data_stream, SortMapping(_length))
@@ -307,19 +274,14 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     data_stream = Batch(
         data_stream, iteration_scheme=ConstantScheme(batch_size))
 
-    # Cut all sequences to the shape of the smallest one in the batch.
-    # So we will not need masks.
-
     data_stream = Filter(
         data_stream, lambda x: _chech_batch_size(x, batch_size))
 
     data_stream = Padding(data_stream)
     data_stream = FilterSources(data_stream, all_sources)
     data_stream = Mapping(data_stream, _equalize_length)
-    data_stream = FilterSources(
-        data_stream,
-        ('f0', 'f0_mask', 'mgc', 'spectrum', 'transcripts',
-         'transcripts_mask', 'voicing_str'))
+    data_stream = FilterSources(data_stream, all_sources)
+
     data_stream = SourceMapping(
         data_stream, _transpose,
         which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'))
@@ -353,15 +315,12 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
         which_sources=('mgc',))
 
     data_stream = Mapping(data_stream, _zero_for_unvoiced)
-    data_stream = ForceFloatX(
-        data_stream,
-        which_sources=('f0', 'f0_mask', 'spectrum', 'start_flag',
-                       'voiced', 'transcripts_mask'))
-
+    data_stream = ForceFloatX(data_stream, which_sources=which_sources)
     data_stream = FilterSources(data_stream, which_sources)
+    data_stream = Rename(data_stream, {representation: 'data'})
+
     return data_stream
 
 if __name__ == "__main__":
     train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
     print next(train_stream.get_epoch_iterator())
-    #import ipdb; ipdb.set_trace()

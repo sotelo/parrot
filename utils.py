@@ -217,12 +217,15 @@ def plot_sample(spectrum, f0, pi, phi, pi_att, fig_name):
     pyplot.close()
 
 
-def spectrum_to_audio(spectrum, f0, file_name):
-    spectrum = numpy.hstack([spectrum, spectrum[:, ::-1][:, 1:-1]])
-    spectrum = spectrum.astype('float64').copy(order='C')
-    mgc = numpy.apply_along_axis(
-        pysptk.mgcep, 1, spectrum, order, alpha, gamma,
-        eps=0.0012, etype=1, itype=2)
+def spectrum_to_audio(spectrum, f0, use_spectrum, file_name):
+    if use_spectrum:
+        spectrum = numpy.hstack([spectrum, spectrum[:, ::-1][:, 1:-1]])
+        spectrum = spectrum.astype('float64').copy(order='C')
+        mgc = numpy.apply_along_axis(
+            pysptk.mgcep, 1, spectrum, order, alpha, gamma,
+            eps=0.0012, etype=1, itype=2)
+    else:
+        mgc = spectrum
     x_synth = mgcf02wav(mgc, f0)
     x_synth = .95 * x_synth / max(abs(x_synth)) * 2**15
     wavfile.write(file_name, 16000, x_synth.astype('int16'))
@@ -286,6 +289,9 @@ def train_parse():
     parser.add_argument('--attention_alignment', type=float,
                         default=0.05,
                         help='initial lengths of each attention step')
+    parser.add_argument('--use_spectrum', type=bool,
+                        default=False,
+                        help='use spectrum or mgc')
     return parser
 
 

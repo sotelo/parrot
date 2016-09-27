@@ -379,6 +379,70 @@ def raw_stream(
     return data_stream
 
 
+def phonemes_stream(which_sets=('train',), batch_size=64, num_examples=None):
+    dataset = Blizzard(
+        which_sets=which_sets, filename="sp_blizzard_19h_phon.hdf5")
+
+    if not num_examples:
+        num_examples = dataset.num_examples
+
+    data_stream = DataStream(
+        dataset, iteration_scheme=ShuffledExampleScheme(num_examples))
+
+    # data_stream = Filter(data_stream, _filter_blizzard)
+
+    data_stream = Mapping(data_stream, _clip_f0)
+
+    data_stream = Batch(
+        data_stream, iteration_scheme=ConstantScheme(batch_size))
+    # data_stream = Mapping(data_stream, SortMapping(_length))
+    # data_stream = Unpack(data_stream)
+    # data_stream = Batch(
+    #     data_stream, iteration_scheme=ConstantScheme(batch_size))
+
+    data_stream = Filter(
+        data_stream, lambda x: _check_batch_size(x, batch_size))
+
+    # data_stream = Padding(data_stream)
+    # data_stream = FilterSources(data_stream, all_sources)
+    # data_stream = Mapping(data_stream, _equalize_length)
+    # data_stream = FilterSources(data_stream, all_sources)
+
+    data_stream = SourceMapping(
+        data_stream, _transpose,
+        which_sources=('f0', 'sp', 'phonemes'))
+    # data_stream = SegmentSequence(
+    #     data_stream,
+    #     seq_length + 1,
+    #     return_last=False,
+    #     which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'),
+    #     add_flag=True,
+    #     share_value=True)
+
+    data_stream = Mapping(
+        data_stream, _is_nonzero, add_sources=('voiced',))
+
+    data_stream = ScaleAndShift(
+        data_stream,
+        scale=1 / std_spectrum,
+        shift=-mean_spectrum / std_spectrum,
+        which_sources=('sp',))
+
+    data_stream = ScaleAndShift(
+        data_stream,
+        scale=1 / std_f0,
+        shift=-mean_f0 / std_f0,
+        which_sources=('f0',))
+
+    data_stream = Mapping(data_stream, _zero_for_unvoiced)
+    data_stream = ForceFloatX(
+        data_stream, which_sources=('f0', 'sp', 'voiced'))
+    # data_stream = FilterSources(data_stream, which_sources)
+    data_stream = Rename(data_stream, {'sp': 'data'})
+
+    return data_stream.get_epoch_iterator
+
+
 if __name__ == "__main__":
     # import ipdb
     # data_stream = raw_stream(

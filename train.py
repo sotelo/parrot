@@ -164,7 +164,8 @@ if not worker or worker.is_main_worker:
             after_training=False,
             save_separately=['log'],
             use_cpickle=True,
-            save_main_loop=False)
+            save_main_loop=False,
+	    before_first_epoch=True)
         .add_condition(
             ["after_batch", "before_training"],
             predicate=OnLogRecord('valid_nll_best_so_far')),

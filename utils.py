@@ -295,6 +295,50 @@ def train_parse():
     return parser
 
 
+def train_raw_parse():
+    """Parser for training arguments.
+
+    Save dir is by default.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--experiment_name', type=str, default='baseline',
+                        help='name of the experiment.')
+    parser.add_argument('--frame_size', type=int, default=4)
+    parser.add_argument('--rnn1_size', type=int, default=1000,
+                        help='size of time wise RNN hidden state')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='minibatch size')
+    parser.add_argument('--seq_length', type=int, default=64 * 4,
+                        help='RNN sequence length')
+    parser.add_argument('--save_every', type=int, default=500,
+                        help='save frequency')
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
+                        help='learning rate')
+    parser.add_argument('--save_dir', type=str,
+                        default=save_dir,
+                        help='save dir directory')
+    parser.add_argument('--num_levels', type=int, default=256,
+                        help='size of quantization')
+    parser.add_argument('--platoon_port', type=int,
+                        default=None,
+                        help='port where platoon server is running')
+    parser.add_argument('--algorithm', type=str,
+                        default='adam',
+                        help='adam or adasecant')
+    parser.add_argument('--grad_clip', type=float,
+                        default=0.9,
+                        help='how much to clip the gradients. for adam is 10x')
+    parser.add_argument('--lr_schedule', type=bool,
+                        default=False,
+                        help='whether to use the learning rate schedule')
+    parser.add_argument('--load_experiment', type=str,
+                        default=None,
+                        help='name of the experiment that will be loaded')
+    parser.add_argument('--time_limit', type=float, default=None,
+                        help='time in hours that the model will run')
+    return parser
+
+
 def sample_parse():
     """Parser for sampling arguments.
 

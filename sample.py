@@ -80,6 +80,7 @@ phrase_mask = numpy.ones(phrase.shape, dtype='float32')
 [x_sample, sampled_pi, sampled_phi, sampled_pi_att] = parrot.sample_model(
     phrase, phrase_mask, args.num_samples,
     args.num_steps, saved_args.use_spectrum)
+
 sampled_pi_att = sampled_pi_att[:, :, :, 0]
 
 sampled_spectrum = x_sample[:, :, :-2].swapaxes(0, 1)

@@ -1,7 +1,7 @@
 import os
 
 from fuel import config
-from fuel.schemes import ConstantScheme, ShuffledExampleScheme
+from fuel.schemes import ConstantScheme, ShuffledExampleScheme, ShuffledScheme
 from fuel.transformers import (
     AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
     Mapping, Padding, Rename, ScaleAndShift, SortMapping, Transformer, Unpack)
@@ -94,8 +94,29 @@ def _filter_blizzard(data):
         not numpy.isnan(voicing_str).any()
 
 
-def _chech_batch_size(data, batch_size):
+def _check_batch_size(data, batch_size):
     return len(data[0]) == batch_size
+
+
+def _batch_quantize(data, q_levels=256):
+
+    eps = numpy.float64(1e-5)
+
+    data -= data.min(axis=1)[:, None]
+    data *= ((q_levels - eps) / data.max(axis=1)[:, None])
+    data += eps / 2
+
+    data = data.astype('int32')
+
+    return data
+
+
+def _standardize(data):
+    data = data.astype('int64')
+    mind = data.min(axis=1, keepdims=True).astype('float32')
+    maxd = data.max(axis=1, keepdims=True).astype('float32')
+    data = (data - mind) / (maxd - mind)
+    return 2. * data - 1.
 
 
 class SegmentSequence(Transformer):
@@ -119,8 +140,8 @@ class SegmentSequence(Transformer):
         smallest possible sequence length for the last cut
     return_last : bool, optional
         return the last cut of the sequence, which might be different size
-    share_value : bool, optional
-        every cut will share the first value with the last value of past cut
+    share_value : int, optional
+        size of overlap
     """
 
     def __init__(self,
@@ -131,7 +152,7 @@ class SegmentSequence(Transformer):
                  flag_name=None,
                  min_size=10,
                  return_last=True,
-                 share_value=False,
+                 share_value=0,
                  **kwargs):
 
         super(SegmentSequence, self).__init__(
@@ -182,13 +203,16 @@ class SegmentSequence(Transformer):
 
         self.step += self.seq_size
 
-        if self.share_value:
-            self.step -= 1
+        # if self.share_value:
+        #     self.step -= 1
+
+        # Size of overlap:
+        self.step -= self.share_value
 
         if self.step + self.min_size >= self.len_data:
             self.data = None
             self.len_data = None
-            self.step = 1
+            self.step = 0
             flag = 1
 
         if self.add_flag:
@@ -263,7 +287,7 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
     data_stream = DataStream(
         dataset, iteration_scheme=ShuffledExampleScheme(num_examples))
 
-    data_stream = Filter(data_stream, _filter_blizzard)
+    # data_stream = Filter(data_stream, _filter_blizzard)
 
     data_stream = Mapping(data_stream, _clip_f0)
 
@@ -275,7 +299,7 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
         data_stream, iteration_scheme=ConstantScheme(batch_size))
 
     data_stream = Filter(
-        data_stream, lambda x: _chech_batch_size(x, batch_size))
+        data_stream, lambda x: _check_batch_size(x, batch_size))
 
     data_stream = Padding(data_stream)
     data_stream = FilterSources(data_stream, all_sources)
@@ -321,6 +345,47 @@ def blizzard_stream(which_sets=('train',), batch_size=64,
 
     return data_stream
 
+
+def raw_stream(
+        which_sets=('train',), batch_size=64, seq_length=100,
+        num_examples=None, frame_size=4, num_levels=256):
+
+    dataset = Blizzard(which_sets=which_sets)
+
+    if not num_examples:
+        num_examples = dataset.num_examples
+
+    data_stream = DataStream(
+        dataset, iteration_scheme=ShuffledScheme(
+            batch_size=batch_size, examples=num_examples))
+
+    data_stream = Filter(
+        data_stream, lambda x: _check_batch_size(x, batch_size))
+
+    data_stream = SourceMapping(data_stream, _standardize)
+    data_stream = SourceMapping(
+        data_stream, lambda x: _batch_quantize(x, num_levels))
+    data_stream = SourceMapping(data_stream, _transpose)
+
+    data_stream = SegmentSequence(
+        data_stream,
+        seq_length + frame_size,
+        return_last=False,
+        add_flag=True,
+        share_value=frame_size)
+
+    data_stream = Rename(data_stream, {'features': 'data'})
+
+    return data_stream
+
+
 if __name__ == "__main__":
+    # import ipdb
+    # data_stream = raw_stream(
+    #     ('train',), batch_size=64, seq_length=128 * 4, frame_size=4)
+    # epoch_iterator = data_stream.get_epoch_iterator()
+    # for _ in range(1000):
+    #     print _, next(epoch_iterator)[1]
+
     train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
-    print next(train_stream.get_epoch_iterator())
+    epoch_iterator = train_stream.get_epoch_iterator()

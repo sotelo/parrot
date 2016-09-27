@@ -840,12 +840,10 @@ class SimpleParrot(Initializable):
 
     def symbolic_initial_states(self):
         initial_h1 = tensor.matrix('initial_h1')
-        initial_h2 = tensor.matrix('initial_h1')
-        initial_h3 = tensor.matrix('initial_h1')
         initial_kappa = tensor.matrix('initial_h1')
         initial_w = tensor.matrix('initial_h1')
 
-        return initial_h1, initial_h2, initial_h3, initial_kappa, initial_w
+        return initial_h1, initial_kappa, initial_w
 
     def numpy_initial_states(self, batch_size):
         initial_h1 = numpy.zeros((batch_size, self.rnn1_h_dim))
@@ -1048,6 +1046,11 @@ class SimpleParrot(Initializable):
             mean_data = mean_mgc
             std_data = std_mgc
 
+        data_upper_limit = data_upper_limit.astype(floatX)
+        data_lower_limit = data_lower_limit.astype(floatX)
+        mean_data = mean_data.astype(floatX)
+        std_data = std_data.astype(floatX)
+
         f0, f0_mask, voiced, spectrum, transcripts, \
             transcripts_mask, start_flag = \
             self.symbolic_input_variables()
@@ -1061,3 +1064,106 @@ class SimpleParrot(Initializable):
             [transcripts, transcripts_mask],
             [sample_x, sample_pi, sample_phi, sample_pi_att],
             updates=updates)(phrase, phrase_mask)
+
+
+class RawParrot(Initializable):
+    def __init__(
+            self,
+            frame_size=4,
+            rnn1_h_dim=400,
+            mlp_dim=100,
+            **kwargs):
+
+        super(RawParrot, self).__init__(**kwargs)
+
+        self.frame_size = frame_size
+        self.rnn1_h_dim = rnn1_h_dim
+        self.mlp_dim = mlp_dim
+
+        self.rnn1_cell1 = GatedRecurrent(dim=rnn1_h_dim, name='rnn1_cell1')
+
+        self.inp_to_h1 = Fork(
+            output_names=['rnn1_cell1_inputs', 'rnn1_cell1_gates'],
+            input_dim=frame_size,
+            output_dims=[rnn1_h_dim, 2 * rnn1_h_dim],
+            name='inp_to_h1')
+
+        self.h1_to_mlp = Linear(
+            input_dim=rnn1_h_dim,
+            output_dim=frame_size * rnn1_h_dim,
+            name='h1_to_readout')
+
+        self.mlp = MLP()
+
+        self.emitter = SoftmaxEmitter()
+
+        self.children = [
+            self.rnn1_cell1,
+            self.inp_to_h1,
+            self.h1_to_mlp,
+            self.mlp,
+            self.emitter]
+
+    def symbolic_input_variables(self):
+        start_flag = tensor.scalar('start_flag')
+        data = tensor.imatrix('data')
+
+        return data, start_flag
+
+    def initial_states(self, batch_size):
+        initial_h1 = shared_floatx_zeros((batch_size, self.rnn1_h_dim))
+
+        return initial_h1
+
+    def symbolic_initial_states(self):
+        initial_h1 = tensor.matrix('initial_h1')
+
+        return initial_h1
+
+    def numpy_initial_states(self, batch_size):
+        initial_h1 = numpy.zeros((batch_size, self.rnn1_h_dim))
+
+        return initial_h1
+
+    @application
+    def compute_cost(
+            self, data, start_flag, batch_size,
+            seq_length, frame_size, num_levels):
+
+        input_sequences = data[:, :-frame_size]
+        target_sequences = data[:, frame_size:]
+
+        rnn_input = input_sequences.reshape((
+            input_sequences.shape[0],
+            input_sequences.shape[1] / frame_size,
+            frame_size))
+
+        rnn_input = (rnn_input.astype('float32') / num_levels / 2.) - 1.
+        rnn_input *= 2.
+
+        initial_h1 = self.initial_states(batch_size)
+
+        # put hidden h
+        rnn_hiddens = self.rnn1_cell1.apply(rnn_input)
+        rnn_output = self.h1_to_mlp.apply(rnn_hiddens)
+        rnn_output = rnn_output.reshape((
+            rnn_output.shape[0],
+            rnn_output.shape[1] * frame_size,
+            self.rnn1_h_dim))
+
+        prev_samples = data[:, :-1]
+        prev_samples = prev_samples.reshape((1, batch_size, 1, -1))
+        prev_samples = tensor.nnet.neighbours.images2neibs(
+            prev_samples, (1, frame_size), neib_step=(1, 1), mode='valid')
+        prev_samples = prev_samples.reshape(
+            (batch_size * seq_length, frame_size))
+
+        cost = cost_f0 + cost_gmm
+        cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
+
+        updates = []
+        updates.append((
+            initial_h1,
+            tensor.switch(start_flag, 0. * initial_h1, rnn_hiddens[-1])))
+
+        return cost, updates

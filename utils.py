@@ -217,6 +217,29 @@ def plot_sample(spectrum, f0, pi, phi, pi_att, fig_name):
     pyplot.close()
 
 
+def plot_spectrum(real_spectrum, spectrum, f0, fig_name):
+    f, axarr = pyplot.subplots(3, sharex=True)
+    f.set_size_inches(10, 8.5)
+    im0 = axarr[0].imshow(
+        real_spectrum.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    im1 = axarr[1].imshow(
+        spectrum.T, origin='lower',
+        aspect='auto', interpolation='nearest')
+    axarr[2].plot(f0, linewidth=1)
+
+    cax0 = make_axes_locatable(axarr[0]).append_axes(
+        "right", size="1%", pad=0.05)
+    cax1 = make_axes_locatable(axarr[1]).append_axes(
+        "right", size="1%", pad=0.05)
+
+    pyplot.colorbar(im0, cax=cax0)
+    pyplot.colorbar(im1, cax=cax1)
+
+    pyplot.savefig(fig_name)
+    pyplot.close()
+
+
 def spectrum_to_audio(spectrum, f0, use_spectrum, file_name):
     if use_spectrum:
         spectrum = numpy.hstack([spectrum, spectrum[:, ::-1][:, 1:-1]])
@@ -292,6 +315,53 @@ def train_parse():
     parser.add_argument('--use_spectrum', type=bool,
                         default=False,
                         help='use spectrum or mgc')
+    return parser
+
+
+def train_phonemes_parse():
+    """Parser for training arguments.
+
+    Save dir is by default.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--experiment_name', type=str, default='baseline',
+                        help='name of the experiment.')
+    parser.add_argument('--num_freq', type=int, default=257,
+                        help='number of frequencies in the spectrum')
+    parser.add_argument('--rnn1_size', type=int, default=1000,
+                        help='size of time wise RNN hidden state')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='minibatch size')
+    parser.add_argument('--save_every', type=int, default=500,
+                        help='save frequency')
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
+                        help='learning rate')
+    parser.add_argument('--num_mixture', type=int, default=20,
+                        help='number of gaussian mixtures for the spectrum')
+    parser.add_argument('--save_dir', type=str,
+                        default=save_dir,
+                        help='save dir directory')
+    parser.add_argument('--num_phonemes', type=int, default=365,
+                        help='size of dictionary')
+    parser.add_argument('--platoon_port', type=int,
+                        default=None,
+                        help='port where platoon server is running')
+    parser.add_argument('--algorithm', type=str,
+                        default='adam',
+                        help='adam or adasecant')
+    parser.add_argument('--grad_clip', type=float,
+                        default=0.9,
+                        help='how much to clip the gradients. for adam is 10x')
+    parser.add_argument('--lr_schedule', type=bool,
+                        default=False,
+                        help='whether to use the learning rate schedule')
+    parser.add_argument('--load_experiment', type=str,
+                        default=None,
+                        help='name of the experiment that will be loaded')
+    parser.add_argument('--time_limit', type=float, default=None,
+                        help='time in hours that the model will run')
+    parser.add_argument('--phonemes_embed_dim', type=int, default=200,
+                        help='size of phonemes embedding')
     return parser
 
 

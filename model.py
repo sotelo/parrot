@@ -1,6 +1,7 @@
 from blocks.bricks import (
     Initializable, Linear, Logistic, Random)
 from blocks.bricks.base import application
+from blocks.bricks.lookup import LookupTable
 from blocks.bricks.parallel import Fork
 from blocks.bricks.recurrent import GatedRecurrent
 from blocks.bricks.sequence_generators import AbstractEmitter
@@ -1064,6 +1065,235 @@ class SimpleParrot(Initializable):
             [transcripts, transcripts_mask],
             [sample_x, sample_pi, sample_phi, sample_pi_att],
             updates=updates)(phrase, phrase_mask)
+
+
+class PhonemesParrot(Initializable):
+    def __init__(
+            self,
+            num_freq=257,
+            k=20,
+            num_phonemes=365,
+            rnn1_h_dim=400,
+            readouts_dim=200,
+            phonemes_embed_dim=200,
+            sampling_bias=0.,
+            **kwargs):
+
+        super(PhonemesParrot, self).__init__(**kwargs)
+
+        self.num_freq = num_freq
+        self.k = k
+        self.rnn1_h_dim = rnn1_h_dim
+        self.sampling_bias = sampling_bias
+        self.readouts_dim = readouts_dim
+        self.phonemes_embed_dim = phonemes_embed_dim
+
+        self.embed_phonemes = LookupTable(num_phonemes, phonemes_embed_dim)
+
+        self.rnn1_cell1 = GatedRecurrent(dim=rnn1_h_dim, name='rnn1_cell1')
+
+        self.inp_to_h1 = Fork(
+            output_names=['rnn1_cell1_inputs', 'rnn1_cell1_gates'],
+            input_dim=num_freq + 2,
+            output_dims=[rnn1_h_dim, 2 * rnn1_h_dim],
+            name='inp_to_h1')
+
+        self.h1_to_readout = Linear(
+            input_dim=rnn1_h_dim,
+            output_dim=readouts_dim,
+            name='h1_to_readout')
+
+        self.phon_to_h1 = Fork(
+            output_names=['rnn1_cell1_inputs', 'rnn1_cell1_gates'],
+            input_dim=phonemes_embed_dim,
+            output_dims=[rnn1_h_dim, 2 * rnn1_h_dim],
+            name='phon_to_h1')
+
+        self.phon_to_readout = Linear(
+            input_dim=phonemes_embed_dim,
+            output_dim=readouts_dim,
+            name='phon_to_readout')
+
+        # self.f0_emitter = F0Emitter(
+        #     input_dim=readouts_dim,
+        #     k_f0=k_f0,
+        #     sampl_bias=sampling_bias)
+
+        self.spectrum_emitter = GMMEmitter(
+            input_dim=readouts_dim,
+            dim=num_freq,
+            k=k,
+            sampl_bias=sampling_bias)
+
+        self.children = [
+            self.embed_phonemes,
+            self.rnn1_cell1,
+            self.inp_to_h1,
+            self.h1_to_readout,
+            self.phon_to_h1,
+            self.phon_to_readout,
+            # self.f0_emitter,
+            self.spectrum_emitter]
+
+    def symbolic_input_variables(self):
+        f0 = tensor.matrix('f0')
+        voiced = tensor.matrix('voiced')
+        spectrum = tensor.tensor3('data')
+        phonemes = tensor.imatrix('phonemes')
+        return f0, voiced, spectrum, phonemes
+
+    def initial_states(self, batch_size):
+        initial_h1 = shared_floatx_zeros((batch_size, self.rnn1_h_dim))
+        return initial_h1
+
+    def symbolic_initial_states(self):
+        initial_h1 = tensor.matrix('initial_h1')
+        return initial_h1
+
+    def numpy_initial_states(self, batch_size):
+        initial_h1 = numpy.zeros((batch_size, self.rnn1_h_dim))
+        return initial_h1
+
+    @application
+    def compute_cost(
+            self, f0, voiced, spectrum, phonemes, batch_size):
+
+        phon_embed = self.embed_phonemes.apply(phonemes)
+        phon_embed = phon_embed[:-1]
+
+        f0_pr = tensor.shape_padright(f0)
+        voiced_pr = tensor.shape_padright(voiced)
+
+        data = tensor.concatenate([spectrum, f0_pr, voiced_pr], 2)
+
+        x = data[:-1]
+        # target = data[1:]
+        # mask = f0_mask[1:]
+
+        # target_f0 = f0[1:]
+        # target_voiced = voiced[1:]
+        target_spectrum = spectrum[1:]
+
+        xinp_h1, xgat_h1 = self.inp_to_h1.apply(x)
+        pinp_h1, pgat_h1 = self.phon_to_h1.apply(phon_embed)
+
+        inp_h1 = xinp_h1 + pinp_h1
+        gat_h1 = xgat_h1 + pgat_h1
+
+        initial_h1 = self.initial_states(batch_size)
+
+        def step(inp_h1_t, gat_h1_t, h1_tm1):
+
+            h1_t = self.rnn1_cell1.apply(
+                inp_h1_t, gat_h1_t, h1_tm1, iterate=False)
+
+            return h1_t
+
+        h1, scan_updates = theano.scan(
+            fn=step,
+            sequences=[inp_h1, gat_h1],
+            non_sequences=[],
+            outputs_info=[initial_h1])
+
+        readouts = self.h1_to_readout.apply(h1) + \
+            self.phon_to_readout.apply(phon_embed)
+
+        # cost_f0 = self.f0_emitter.cost(readouts, target_f0, target_voiced)
+        cost_gmm = self.spectrum_emitter.cost(readouts, target_spectrum)
+
+        # cost = self.emitter.cost(readouts, target)
+        # cost = cost_f0 + cost_gmm
+        cost = cost_gmm.mean()
+
+        return cost, scan_updates
+
+    @application
+    def sample_model_fun(
+            self, f0, voiced, phonemes, num_samples,
+            data_upper_limit, data_lower_limit, mean_data, std_data):
+
+        f0 = tensor.shape_padright(f0)
+        voiced = tensor.shape_padright(voiced)
+
+        initial_h1 = self.initial_states(num_samples)
+        initial_x = numpy.zeros(
+            (num_samples, self.num_freq + 2), dtype=floatX)
+
+        phon_embed = self.embed_phonemes.apply(phonemes)
+        phon_embed = phon_embed[:-1]
+
+        pinp_h1, pgat_h1 = self.phon_to_h1.apply(phon_embed)
+        phon_readout = self.phon_to_readout.apply(phon_embed)
+
+        def sample_step(
+                f0_t, voiced_t, pinp_h1_t, pgat_h1_t,
+                phon_readout_t, x_tm1, h1_tm1):
+
+            xinp_h1_t, xgat_h1_t = self.inp_to_h1.apply(x_tm1)
+
+            h1_t = self.rnn1_cell1.apply(
+                xinp_h1_t + pinp_h1_t,
+                xgat_h1_t + pgat_h1_t, h1_tm1, iterate=False)
+
+            readout_t = self.h1_to_readout.apply(h1_t) + \
+                phon_readout_t
+
+            # f0_t, voiced_t = self.f0_emitter.emit(readout_t)
+            spectrum_t = self.spectrum_emitter.emit(readout_t)
+
+            # Experiment: Limit the values that can be sampled.
+            # spectrum_t = tensor.minimum(
+            #     spectrum_t, (data_upper_limit - mean_data) /
+            #     std_data)
+
+            # spectrum_t = tensor.maximum(
+            #     spectrum_t, (data_lower_limit - mean_data) /
+            #     std_data)
+
+            x_t = tensor.concatenate([spectrum_t, f0_t, voiced_t], 1)
+
+            # x_t = tensor.cast(x_t, floatX)
+            # h1_t = tensor.cast(h1_t, floatX)
+
+            # mu_t, sigma_t, pi_t = self.spectrum_emitter.components(readout_t)
+
+            return x_t, h1_t
+
+        (sample_x, h1), updates = theano.scan(
+            fn=sample_step,
+            sequences=[f0, voiced, pinp_h1, pgat_h1, phon_readout],
+            non_sequences=[],
+            outputs_info=[
+                initial_x,
+                initial_h1])
+
+        return sample_x, updates
+
+    def sample_model(
+            self, f0_tr, phonemes_tr, voiced_tr, num_samples):
+
+        data_upper_limit = spectrum_upper_limit
+        data_lower_limit = spectrum_lower_limit
+        mean_data = mean_spectrum
+        std_data = std_spectrum
+
+        data_upper_limit = data_upper_limit.astype(floatX)
+        data_lower_limit = data_lower_limit.astype(floatX)
+        mean_data = mean_data.astype(floatX)
+        std_data = std_data.astype(floatX)
+
+        f0, voiced, spectrum, phonemes = \
+            self.symbolic_input_variables()
+
+        sample_x, updates = \
+            self.sample_model_fun(
+                f0, voiced, phonemes, num_samples,
+                data_upper_limit, data_lower_limit, mean_data, std_data)
+
+        return function(
+            [f0, voiced, phonemes],
+            [sample_x],
+            updates=updates)(f0_tr, voiced_tr, phonemes_tr)
 
 
 class RawParrot(Initializable):

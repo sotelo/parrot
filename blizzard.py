@@ -43,6 +43,12 @@ def _equalize_length(data):
                   voicing_str[:, :idx]])
 
 
+def _start_with_zero(data, n=1):
+    data[:-n] = data[n:]
+    data[-n:] = 0 * data[-n:]
+    return data
+
+
 def _transpose(data):
     return data.swapaxes(0, 1)
 
@@ -379,7 +385,10 @@ def raw_stream(
     return data_stream
 
 
-def phonemes_stream(which_sets=('train',), batch_size=64, num_examples=None):
+def phonemes_stream(
+        which_sets=('train',), batch_size=64, num_examples=None,
+        sample_flag=False):
+
     dataset = Blizzard(
         which_sets=which_sets, filename="sp_blizzard_19h_phon.hdf5")
 
@@ -434,13 +443,19 @@ def phonemes_stream(which_sets=('train',), batch_size=64, num_examples=None):
         shift=-mean_f0 / std_f0,
         which_sources=('f0',))
 
-    data_stream = Mapping(data_stream, _zero_for_unvoiced)
+    if not sample_flag:
+        data_stream = Mapping(data_stream, _zero_for_unvoiced)
+
+    data_stream = SourceMapping(
+        data_stream, _start_with_zero,
+        which_sources=('f0', 'voiced', 'phonemes'))
+
     data_stream = ForceFloatX(
         data_stream, which_sources=('f0', 'sp', 'voiced'))
     # data_stream = FilterSources(data_stream, which_sources)
     data_stream = Rename(data_stream, {'sp': 'data'})
 
-    return data_stream.get_epoch_iterator
+    return data_stream
 
 
 if __name__ == "__main__":

@@ -1313,8 +1313,8 @@ class NewPhonemesParrot(Initializable):
         self.readouts_dim = readouts_dim
 
         self.rnn1 = GatedRecurrent(dim=rnn_h_dim, name='rnn1')
-        # self.rnn2 = GatedRecurrent(dim=rnn_h_dim, name='rnn2')
-        # self.rnn3 = GatedRecurrent(dim=rnn_h_dim, name='rnn3')
+        self.rnn2 = GatedRecurrent(dim=rnn_h_dim, name='rnn2')
+        self.rnn3 = GatedRecurrent(dim=rnn_h_dim, name='rnn3')
 
         self.inp_to_h1 = Fork(
             output_names=['rnn1_inputs', 'rnn1_gates'],
@@ -1322,17 +1322,17 @@ class NewPhonemesParrot(Initializable):
             output_dims=[rnn_h_dim, 2 * rnn_h_dim],
             name='inp_to_h1')
 
-        # self.inp_to_h2 = Fork(
-        #     output_names=['rnn2_inputs', 'rnn2_gates'],
-        #     input_dim=input_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='inp_to_h2')
+        self.inp_to_h2 = Fork(
+            output_names=['rnn2_inputs', 'rnn2_gates'],
+            input_dim=input_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='inp_to_h2')
 
-        # self.inp_to_h3 = Fork(
-        #     output_names=['rnn3_inputs', 'rnn3_gates'],
-        #     input_dim=input_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='inp_to_h3')
+        self.inp_to_h3 = Fork(
+            output_names=['rnn3_inputs', 'rnn3_gates'],
+            input_dim=input_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='inp_to_h3')
 
         self.out_to_h1 = Fork(
             output_names=['rnn1_inputs', 'rnn1_gates'],
@@ -1340,32 +1340,50 @@ class NewPhonemesParrot(Initializable):
             output_dims=[rnn_h_dim, 2 * rnn_h_dim],
             name='out_to_h1')
 
-        # self.out_to_h2 = Fork(
-        #     output_names=['rnn2_inputs', 'rnn2_gates'],
-        #     input_dim=output_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='out_to_h2')
+        self.out_to_h2 = Fork(
+            output_names=['rnn2_inputs', 'rnn2_gates'],
+            input_dim=output_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='out_to_h2')
 
-        # self.out_to_h3 = Fork(
-        #     output_names=['rnn3_inputs', 'rnn3_gates'],
-        #     input_dim=output_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='out_to_h3')
+        self.out_to_h3 = Fork(
+            output_names=['rnn3_inputs', 'rnn3_gates'],
+            input_dim=output_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='out_to_h3')
 
         self.h1_to_readout = Linear(
             input_dim=rnn_h_dim,
             output_dim=readouts_dim,
             name='h1_to_readout')
 
-        # self.h2_to_readout = Linear(
-        #     input_dim=rnn_h_dim,
-        #     output_dim=readouts_dim,
-        #     name='h2_to_readout')
+        self.h2_to_readout = Linear(
+            input_dim=rnn_h_dim,
+            output_dim=readouts_dim,
+            name='h2_to_readout')
 
-        # self.h3_to_readout = Linear(
-        #     input_dim=rnn_h_dim,
-        #     output_dim=readouts_dim,
-        #     name='h3_to_readout')
+        self.h3_to_readout = Linear(
+            input_dim=rnn_h_dim,
+            output_dim=readouts_dim,
+            name='h3_to_readout')
+
+        self.h1_to_h2 = Fork(
+            output_names=['rnn2_inputs', 'rnn2_gates'],
+            input_dim=rnn_h_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='h1_to_h2')
+
+        self.h1_to_h3 = Fork(
+            output_names=['rnn3_inputs', 'rnn3_gates'],
+            input_dim=rnn_h_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='h1_to_h3')
+
+        self.h2_to_h3 = Fork(
+            output_names=['rnn3_inputs', 'rnn3_gates'],
+            input_dim=rnn_h_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='h2_to_h3')
 
         self.readout_to_output = Linear(
             input_dim=readouts_dim,
@@ -1374,17 +1392,20 @@ class NewPhonemesParrot(Initializable):
 
         self.children = [
             self.rnn1,
-            # self.rnn2,
-            # self.rnn3,
+            self.rnn2,
+            self.rnn3,
             self.inp_to_h1,
-            # self.inp_to_h2,
-            # self.inp_to_h3,
+            self.inp_to_h2,
+            self.inp_to_h3,
             self.out_to_h1,
-            # self.out_to_h2,
-            # self.out_to_h3,
+            self.out_to_h2,
+            self.out_to_h3,
             self.h1_to_readout,
-            # self.h2_to_readout,
-            # self.h3_to_readout,
+            self.h2_to_readout,
+            self.h3_to_readout,
+            self.h1_to_h2,
+            self.h1_to_h3,
+            self.h2_to_h3,
             self.readout_to_output]
 
     def symbolic_input_variables(self):
@@ -1396,23 +1417,26 @@ class NewPhonemesParrot(Initializable):
 
     def initial_states(self, batch_size):
         initial_h1 = self.rnn1.initial_states(batch_size)
-        # initial_h2 = shared_floatx_zeros((batch_size, self.rnn_h_dim))
-        # initial_h3 = shared_floatx_zeros((batch_size, self.rnn_h_dim))
+        initial_h2 = self.rnn2.initial_states(batch_size)
+        initial_h3 = self.rnn3.initial_states(batch_size)
         last_h1 = shared_floatx_zeros((batch_size, self.rnn_h_dim))
+        last_h2 = shared_floatx_zeros((batch_size, self.rnn_h_dim))
+        last_h3 = shared_floatx_zeros((batch_size, self.rnn_h_dim))
         use_last_states = shared(numpy.asarray(0., dtype=floatX))
-        return initial_h1, last_h1, use_last_states  # , initial_h2, initial_h3
+        return initial_h1, last_h1, initial_h2, last_h2, \
+            initial_h3, last_h3, use_last_states
 
     def symbolic_initial_states(self):
         initial_h1 = tensor.matrix('initial_h1')
-        # initial_h2 = tensor.matrix('initial_h2')
-        # initial_h3 = tensor.matrix('initial_h3')
-        return initial_h1  # , initial_h2, initial_h3
+        initial_h2 = tensor.matrix('initial_h2')
+        initial_h3 = tensor.matrix('initial_h3')
+        return initial_h1, initial_h2, initial_h3
 
     def numpy_initial_states(self, batch_size):
         initial_h1 = numpy.zeros((batch_size, self.rnn_h_dim))
-        # initial_h2 = numpy.zeros((batch_size, self.rnn_h_dim))
-        # initial_h3 = numpy.zeros((batch_size, self.rnn_h_dim))
-        return initial_h1  # , initial_h2, initial_h3
+        initial_h2 = numpy.zeros((batch_size, self.rnn_h_dim))
+        initial_h3 = numpy.zeros((batch_size, self.rnn_h_dim))
+        return initial_h1, initial_h2, initial_h3
 
     @application
     def compute_cost(
@@ -1424,47 +1448,67 @@ class NewPhonemesParrot(Initializable):
         labels = labels[1:]
 
         inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
-        # inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
-        # inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
+        inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
+        inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
 
         out_cell_h1, out_gat_h1 = self.out_to_h1.apply(input_features)
-        # out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
-        # out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
+        out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
+        out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
 
         cell_h1 = inp_cell_h1 + out_cell_h1
-        # cell_h2 = inp_cell_h2 + out_cell_h2
-        # cell_h3 = inp_cell_h3 + out_cell_h3
+        cell_h2 = inp_cell_h2 + out_cell_h2
+        cell_h3 = inp_cell_h3 + out_cell_h3
 
         gat_h1 = inp_gat_h1 + out_gat_h1
-        # gat_h2 = inp_gat_h2 + out_gat_h2
-        # gat_h3 = inp_gat_h3 + out_gat_h3
+        gat_h2 = inp_gat_h2 + out_gat_h2
+        gat_h3 = inp_gat_h3 + out_gat_h3
 
-        initial_h1, last_h1, use_last_states = \
+        initial_h1, last_h1, initial_h2, last_h2,\
+            initial_h3, last_h3, use_last_states = \
             self.initial_states(batch_size)
 
         input_h1 = tensor.switch(
             use_last_states, last_h1, initial_h1)
+        input_h2 = tensor.switch(
+            use_last_states, last_h2, initial_h2)
+        input_h3 = tensor.switch(
+            use_last_states, last_h3, initial_h3)
 
-        def step(inp_h1_t, gat_h1_t, h1_tm1):
+        def step(
+                inp_h1_t, gat_h1_t, inp_h2_t, gat_h2_t,
+                inp_h3_t, gat_h3_t, h1_tm1, h2_tm1, h3_tm1):
 
             h1_t = self.rnn1.apply(
-                inp_h1_t, gat_h1_t, h1_tm1, iterate=False)
+                inp_h1_t,
+                gat_h1_t,
+                h1_tm1, iterate=False)
 
-            # h2_t = self.rnn2.apply(
-            #     inp_h1_t, gat_h1_t, h1_tm1, iterate=False)
+            h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
+            h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
 
-            # h3_t = self.rnn3.apply(
-            #     inp_h1_t, gat_h1_t, h1_tm1, iterate=False)
+            h2_t = self.rnn2.apply(
+                inp_h2_t + h1inp_h2,
+                gat_h2_t + h1gat_h2,
+                h2_tm1, iterate=False)
 
-            return h1_t
+            h2inp_h3, h2gat_h3 = self.h2_to_h3.apply(h2_t)
 
-        h1, scan_updates = theano.scan(
+            h3_t = self.rnn3.apply(
+                inp_h3_t + h1inp_h3 + h2inp_h3,
+                gat_h3_t + h1gat_h3 + h2gat_h3,
+                h3_tm1, iterate=False)
+
+            return h1_t, h2_t, h3_t
+
+        (h1, h2, h3), scan_updates = theano.scan(
             fn=step,
-            sequences=[cell_h1, gat_h1],
+            sequences=[cell_h1, gat_h1, cell_h2, gat_h2, cell_h3, gat_h3],
             non_sequences=[],
-            outputs_info=[input_h1])
+            outputs_info=[input_h1, input_h2, input_h3])
 
-        readouts = self.h1_to_readout.apply(h1)
+        readouts = self.h1_to_readout.apply(h1) + \
+            self.h2_to_readout.apply(h2) + \
+            self.h3_to_readout.apply(h3)
 
         predicted_target = self.readout_to_output.apply(readouts)
 
@@ -1474,6 +1518,8 @@ class NewPhonemesParrot(Initializable):
 
         updates = []
         updates.append((last_h1, h1[-1]))
+        updates.append((last_h2, h2[-1]))
+        updates.append((last_h3, h3[-1]))
         updates.append((use_last_states, 1. - start_flag))
 
         return cost, scan_updates + updates
@@ -1482,36 +1528,68 @@ class NewPhonemesParrot(Initializable):
     def sample_model_fun(
             self, labels, labels_mask, num_samples):
 
-        initial_h1, last_h1, use_last_states = \
+        initial_h1, last_h1, initial_h2, last_h2, \
+            initial_h3, last_h3, use_last_states = \
             self.initial_states(num_samples)
 
         initial_x = numpy.zeros(
             (num_samples, self.output_dim), dtype=floatX)
 
         inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
+        inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
+        inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
 
         def sample_step(
-                inp_cell_h1_t, inp_gat_h1_t, x_tm1, h1_tm1):
+                inp_cell_h1_t, inp_gat_h1_t, inp_cell_h2_t, inp_gat_h2_t,
+                inp_cell_h3_t, inp_gat_h3_t, x_tm1, h1_tm1, h2_tm1, h3_tm1):
 
             out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
+            out_cell_h2_t, out_gat_h2_t = self.out_to_h2.apply(x_tm1)
+            out_cell_h3_t, out_gat_h3_t = self.out_to_h3.apply(x_tm1)
 
             h1_t = self.rnn1.apply(
                 inp_cell_h1_t + out_cell_h1_t,
-                inp_gat_h1_t + out_gat_h1_t, h1_tm1, iterate=False)
+                inp_gat_h1_t + out_gat_h1_t,
+                h1_tm1, iterate=False)
 
-            readout_t = self.h1_to_readout.apply(h1_t)
+            h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
+            h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
+
+            h2_t = self.rnn2.apply(
+                inp_cell_h2_t + out_cell_h2_t + h1inp_h2,
+                inp_gat_h2_t + out_gat_h2_t + h1gat_h2,
+                h2_tm1, iterate=False)
+
+            h2inp_h3, h2gat_h3 = self.h2_to_h3.apply(h2_t)
+
+            h3_t = self.rnn3.apply(
+                inp_cell_h3_t + out_cell_h3_t + h1inp_h3 + h2inp_h3,
+                inp_gat_h3_t + out_gat_h3_t + h1gat_h3 + h2gat_h3,
+                h3_tm1, iterate=False)
+
+            readout_t = self.h1_to_readout.apply(h1_t) + \
+                self.h2_to_readout.apply(h2_t) + \
+                self.h3_to_readout.apply(h3_t)
 
             predicted_x_t = self.readout_to_output.apply(readout_t)
 
-            return predicted_x_t, h1_t
+            return predicted_x_t, h1_t, h2_t, h3_t
 
-        (sample_x, h1), updates = theano.scan(
+        (sample_x, h1, h2, h3), updates = theano.scan(
             fn=sample_step,
-            sequences=[inp_cell_h1, inp_gat_h1],
+            sequences=[
+                inp_cell_h1,
+                inp_gat_h1,
+                inp_cell_h2,
+                inp_gat_h2,
+                inp_cell_h3,
+                inp_gat_h3],
             non_sequences=[],
             outputs_info=[
                 initial_x,
-                initial_h1])
+                initial_h1,
+                initial_h2,
+                initial_h3])
 
         return sample_x, updates
 

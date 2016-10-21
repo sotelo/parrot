@@ -1,7 +1,9 @@
 import os
 
 from fuel import config
-from fuel.schemes import ConstantScheme, ShuffledExampleScheme, ShuffledScheme
+from fuel.schemes import (
+    ConstantScheme, ShuffledExampleScheme,
+    SequentialExampleScheme, ShuffledScheme)
 from fuel.transformers import (
     AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
     Mapping, Padding, Rename, ScaleAndShift, SortMapping, Transformer, Unpack)
@@ -265,6 +267,16 @@ class Blizzard(H5PYDataset):
         return os.path.join(config.data_path[0], 'blizzard', self.filename)
 
 
+class Arctic(H5PYDataset):
+    def __init__(self, which_sets, filename='slt_arctic_data.hdf5', **kwargs):
+        self.filename = filename
+        super(Arctic, self).__init__(self.data_path, which_sets, **kwargs)
+
+    @property
+    def data_path(self):
+        return os.path.join(config.data_path[0], 'slt_arctic', self.filename)
+
+
 def blizzard_stream(which_sets=('train',), batch_size=64,
                     seq_length=100, num_examples=None, sorting_mult=20,
                     which_sources=None, use_spectrum=True):
@@ -458,6 +470,52 @@ def phonemes_stream(
     return data_stream
 
 
+def aligned_stream(
+        which_sets=('train',), batch_size=32,
+        seq_size=50, num_examples=None,
+        sorting_mult=4):
+
+    all_sources = ('features', 'features_mask', 'labels')
+
+    dataset = Arctic(which_sets=which_sets)
+
+    sorting_size = batch_size * sorting_mult
+
+    if not num_examples:
+        num_examples = dataset.num_examples
+
+    if 'train' in which_sets:
+        print "Random order."
+        scheme = ShuffledExampleScheme(num_examples)
+    else:
+        print "Sequential order."
+        scheme = SequentialExampleScheme(num_examples)
+
+    data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
+
+    data_stream = Batch(
+        data_stream, iteration_scheme=ConstantScheme(sorting_size))
+    data_stream = Mapping(data_stream, SortMapping(_length))
+    data_stream = Unpack(data_stream)
+    data_stream = Batch(
+        data_stream, iteration_scheme=ConstantScheme(batch_size))
+
+    data_stream = Filter(
+        data_stream, lambda x: _check_batch_size(x, batch_size))
+
+    data_stream = Padding(data_stream)
+    data_stream = FilterSources(data_stream, all_sources)
+    data_stream = SourceMapping(data_stream, _transpose)
+
+    data_stream = SegmentSequence(
+        data_stream,
+        seq_size=seq_size + 1,
+        share_value=1,
+        return_last=False,
+        add_flag=True)
+
+    return data_stream
+
 if __name__ == "__main__":
     # import ipdb
     # data_stream = raw_stream(
@@ -466,5 +524,8 @@ if __name__ == "__main__":
     # for _ in range(1000):
     #     print _, next(epoch_iterator)[1]
 
-    train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
-    epoch_iterator = train_stream.get_epoch_iterator()
+    # train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
+    # epoch_iterator = train_stream.get_epoch_iterator()
+
+    data_stream = aligned_stream()
+    print next(data_stream.get_epoch_iterator())[0].shape

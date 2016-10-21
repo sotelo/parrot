@@ -365,6 +365,51 @@ def train_phonemes_parse():
     return parser
 
 
+def train_aligned_parse():
+    """Parser for training arguments.
+
+    Save dir is by default.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--experiment_name', type=str, default='baseline',
+                        help='name of the experiment.')
+    parser.add_argument('--input_dim', type=int, default=425,
+                        help='dimension of labels')
+    parser.add_argument('--output_dim', type=int, default=187,
+                        help='dimension of output')
+    parser.add_argument('--rnn_h_dim', type=int, default=1024,
+                        help='size of time wise RNN hidden state')
+    parser.add_argument('--readouts_dim', type=int, default=1024,
+                        help='size of readouts')
+    parser.add_argument('--batch_size', type=int, default=8,
+                        help='minibatch size')
+    parser.add_argument('--save_every', type=int, default=500,
+                        help='save frequency')
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
+                        help='learning rate')
+    parser.add_argument('--save_dir', type=str,
+                        default=save_dir,
+                        help='save dir directory')
+    parser.add_argument('--platoon_port', type=int,
+                        default=None,
+                        help='port where platoon server is running')
+    parser.add_argument('--algorithm', type=str,
+                        default='adam',
+                        help='adam or adasecant')
+    parser.add_argument('--grad_clip', type=float,
+                        default=0.9,
+                        help='how much to clip the gradients. for adam is 10x')
+    parser.add_argument('--lr_schedule', type=bool,
+                        default=False,
+                        help='whether to use the learning rate schedule')
+    parser.add_argument('--load_experiment', type=str,
+                        default=None,
+                        help='name of the experiment that will be loaded')
+    parser.add_argument('--time_limit', type=float, default=None,
+                        help='time in hours that the model will run')
+    return parser
+
+
 def train_raw_parse():
     """Parser for training arguments.
 

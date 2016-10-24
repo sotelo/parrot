@@ -1334,23 +1334,23 @@ class NewPhonemesParrot(Initializable):
             output_dims=[rnn_h_dim, 2 * rnn_h_dim],
             name='inp_to_h3')
 
-        self.out_to_h1 = Fork(
-            output_names=['rnn1_inputs', 'rnn1_gates'],
-            input_dim=output_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='out_to_h1')
+        # self.out_to_h1 = Fork(
+        #     output_names=['rnn1_inputs', 'rnn1_gates'],
+        #     input_dim=output_dim,
+        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+        #     name='out_to_h1')
 
-        self.out_to_h2 = Fork(
-            output_names=['rnn2_inputs', 'rnn2_gates'],
-            input_dim=output_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='out_to_h2')
+        # self.out_to_h2 = Fork(
+        #     output_names=['rnn2_inputs', 'rnn2_gates'],
+        #     input_dim=output_dim,
+        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+        #     name='out_to_h2')
 
-        self.out_to_h3 = Fork(
-            output_names=['rnn3_inputs', 'rnn3_gates'],
-            input_dim=output_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='out_to_h3')
+        # self.out_to_h3 = Fork(
+        #     output_names=['rnn3_inputs', 'rnn3_gates'],
+        #     input_dim=output_dim,
+        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+        #     name='out_to_h3')
 
         self.h1_to_readout = Linear(
             input_dim=rnn_h_dim,
@@ -1397,9 +1397,9 @@ class NewPhonemesParrot(Initializable):
             self.inp_to_h1,
             self.inp_to_h2,
             self.inp_to_h3,
-            self.out_to_h1,
-            self.out_to_h2,
-            self.out_to_h3,
+            # self.out_to_h1,
+            # self.out_to_h2,
+            # self.out_to_h3,
             self.h1_to_readout,
             self.h2_to_readout,
             self.h3_to_readout,
@@ -1451,17 +1451,17 @@ class NewPhonemesParrot(Initializable):
         inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
         inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
 
-        out_cell_h1, out_gat_h1 = self.out_to_h1.apply(input_features)
-        out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
-        out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
+        # out_cell_h1, out_gat_h1 = self.out_to_h1.apply(input_features)
+        # out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
+        # out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
 
-        cell_h1 = inp_cell_h1 + out_cell_h1
-        cell_h2 = inp_cell_h2 + out_cell_h2
-        cell_h3 = inp_cell_h3 + out_cell_h3
+        cell_h1 = inp_cell_h1  # + out_cell_h1
+        cell_h2 = inp_cell_h2  # + out_cell_h2
+        cell_h3 = inp_cell_h3  # + out_cell_h3
 
-        gat_h1 = inp_gat_h1 + out_gat_h1
-        gat_h2 = inp_gat_h2 + out_gat_h2
-        gat_h3 = inp_gat_h3 + out_gat_h3
+        gat_h1 = inp_gat_h1  # + out_gat_h1
+        gat_h2 = inp_gat_h2  # + out_gat_h2
+        gat_h3 = inp_gat_h3  # + out_gat_h3
 
         initial_h1, last_h1, initial_h2, last_h2,\
             initial_h3, last_h3, use_last_states = \
@@ -1543,28 +1543,36 @@ class NewPhonemesParrot(Initializable):
                 inp_cell_h1_t, inp_gat_h1_t, inp_cell_h2_t, inp_gat_h2_t,
                 inp_cell_h3_t, inp_gat_h3_t, x_tm1, h1_tm1, h2_tm1, h3_tm1):
 
-            out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
-            out_cell_h2_t, out_gat_h2_t = self.out_to_h2.apply(x_tm1)
-            out_cell_h3_t, out_gat_h3_t = self.out_to_h3.apply(x_tm1)
+            # out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
+            # out_cell_h2_t, out_gat_h2_t = self.out_to_h2.apply(x_tm1)
+            # out_cell_h3_t, out_gat_h3_t = self.out_to_h3.apply(x_tm1)
+
+            cell_h1_t = inp_cell_h1_t  # + out_cell_h1_t
+            cell_h2_t = inp_cell_h2_t  # + out_cell_h2_t
+            cell_h3_t = inp_cell_h3_t  # + out_cell_h3_t
+
+            gat_h1_t = inp_gat_h1_t  # + out_gat_h1_t
+            gat_h2_t = inp_gat_h2_t  # + out_gat_h2_t
+            gat_h3_t = inp_gat_h3_t  # + out_gat_h3_t
 
             h1_t = self.rnn1.apply(
-                inp_cell_h1_t + out_cell_h1_t,
-                inp_gat_h1_t + out_gat_h1_t,
+                cell_h1_t,
+                gat_h1_t,
                 h1_tm1, iterate=False)
 
             h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
             h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
 
             h2_t = self.rnn2.apply(
-                inp_cell_h2_t + out_cell_h2_t + h1inp_h2,
-                inp_gat_h2_t + out_gat_h2_t + h1gat_h2,
+                cell_h2_t + h1inp_h2,
+                gat_h2_t + h1gat_h2,
                 h2_tm1, iterate=False)
 
             h2inp_h3, h2gat_h3 = self.h2_to_h3.apply(h2_t)
 
             h3_t = self.rnn3.apply(
-                inp_cell_h3_t + out_cell_h3_t + h1inp_h3 + h2inp_h3,
-                inp_gat_h3_t + out_gat_h3_t + h1gat_h3 + h2gat_h3,
+                cell_h3_t + h1inp_h3 + h2inp_h3,
+                gat_h3_t + h1gat_h3 + h2gat_h3,
                 h3_tm1, iterate=False)
 
             readout_t = self.h1_to_readout.apply(h1_t) + \

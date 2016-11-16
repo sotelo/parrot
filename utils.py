@@ -373,9 +373,9 @@ def train_aligned_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--experiment_name', type=str, default='baseline',
                         help='name of the experiment.')
-    parser.add_argument('--input_dim', type=int, default=425,
+    parser.add_argument('--input_dim', type=int, default=420,
                         help='dimension of labels')
-    parser.add_argument('--output_dim', type=int, default=187,
+    parser.add_argument('--output_dim', type=int, default=63,
                         help='dimension of output')
     parser.add_argument('--rnn_h_dim', type=int, default=1024,
                         help='size of time wise RNN hidden state')
@@ -407,6 +407,21 @@ def train_aligned_parse():
                         help='name of the experiment that will be loaded')
     parser.add_argument('--time_limit', type=float, default=None,
                         help='time in hours that the model will run')
+    return parser
+
+
+def speaker_parse():
+    """Parser for training arguments.
+
+    Save dir is by default.
+    """
+    parser = train_aligned_parse()
+    parser.add_argument('--speaker_dim', type=int,
+                        default=128,
+                        help='adam or adasecant')
+    parser.add_argument('--num_speakers', type=int,
+                        default=21,
+                        help='adam or adasecant')
     return parser
 
 
@@ -478,4 +493,17 @@ def sample_parse():
         default='WHAT SHOULD I SAY TO PROVE THAT I AM CAPABLE OF SPEAKING \
         HOW CAN I PROVE THAT I CAN BE TRUSTED TO SPEAK FOR YOU BY MYSELF',
         help='phrase to write')
+    return parser
+
+
+def speaker_conditioned_sample_parse():
+    """Parser for sampling arguments.
+
+    Save dir is by default.
+    """
+    parser = sample_parse()
+    parser.add_argument('--speaker_id', type=int, default=None,
+                        help='which speaker voice')
+    parser.add_argument('--mix', type=float, default=None,
+                    help='mix between two voices')
     return parser

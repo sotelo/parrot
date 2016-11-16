@@ -11,15 +11,15 @@ import logging
 from blocks.serialization import load_parameters
 from blocks.model import Model
 
-from blizzard import aligned_stream
-from model import NewPhonemesParrot
-from utils import sample_parse
+from blizzard import speaker_conditioned_stream
+from model import SpeakerConditionedParrot
+from utils import speaker_conditioned_sample_parse
 
 from io_funcs.binary_io import BinaryIOCollection
 
 logging.basicConfig()
 
-parser = sample_parse()
+parser = speaker_conditioned_sample_parse()
 args = parser.parse_args()
 
 with open(os.path.join(
@@ -32,32 +32,67 @@ with open(os.path.join(
         "best_" + args.experiment_name + ".tar"), 'rb') as src:
     parameters = load_parameters(src)
 
-test_stream = aligned_stream(
-    ('test',), args.num_samples, args.num_steps, sorting_mult=1)
+# test_stream = speaker_conditioned_stream(
+#     ('test',), args.num_samples, args.num_steps, sorting_mult=1)
+
+# features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
+#     next(test_stream.get_epoch_iterator())
+
+numpy.random.seed(1)
+spk_tr = numpy.random.random_integers(
+    1, saved_args.num_speakers - 1, (args.num_samples, 1))
+spk_tr = numpy.int8(spk_tr)
+
+print '/Tmp/sotelo/data/vctk/new_sentences_no_silence.npy'
+labels_tr = numpy.load('/Tmp/sotelo/data/vctk/new_sentences_no_silence.npy')
+lengths_tr = [len(x) for x in labels_tr]
+max_length = max(lengths_tr)
+features_mask_tr = numpy.zeros(
+    (args.num_samples, max_length), dtype='float32')
+padded_labels_tr = numpy.zeros(
+    (args.num_samples, max_length, saved_args.input_dim), dtype='float32')
+
+for i, sample in enumerate(labels_tr):
+    padded_labels_tr[i, :len(sample)] = sample
+    features_mask_tr[i, :len(sample)] = 1.
+
+labels_tr = padded_labels_tr
+
+features_mask_tr = features_mask_tr.swapaxes(0, 1)
+labels_tr = labels_tr.swapaxes(0, 1)
+
+if args.speaker_id:
+    spk_tr = spk_tr * 0 + args.speaker_id
+
+if args.mix:
+    spk_tr = spk_tr * 0
+    parameters['/parrot/lookuptable.W'][0] = \
+        args.mix * parameters['/parrot/lookuptable.W'][10] + \
+        (1 - args.mix) * parameters['/parrot/lookuptable.W'][11]
 
 parrot_args = {
     'input_dim': saved_args.input_dim,
     'output_dim': saved_args.output_dim,
     'rnn_h_dim': saved_args.rnn_h_dim,
     'readouts_dim': saved_args.readouts_dim,
+    'speaker_dim': saved_args.speaker_dim,
+    'num_speakers': saved_args.num_speakers,
     'name': 'parrot'}
 
-parrot = NewPhonemesParrot(**parrot_args)
+parrot = SpeakerConditionedParrot(**parrot_args)
 
-features, features_mask, labels, start_flag = \
+features, features_mask, labels, speaker, start_flag = \
     parrot.symbolic_input_variables()
 
 cost, extra_updates = parrot.compute_cost(
-    features, features_mask, labels, start_flag, args.num_samples)
+    features, features_mask, labels, speaker, start_flag, args.num_samples)
+
 
 model = Model(cost)
 model.set_parameter_values(parameters)
 
-features_tr, features_mask_tr, labels_tr, start_flag_tr = \
-    next(test_stream.get_epoch_iterator())
-
 x_sample = parrot.sample_model(
-    labels_tr, features_mask_tr, args.num_samples)
+    labels_tr, features_mask_tr, spk_tr, args.num_samples)
 
 x_sample = x_sample[0].swapaxes(0, 1)
 
@@ -77,7 +112,7 @@ print "End of sampling."
 # importing from merlin
 import configuration
 cfg=configuration.cfg
-config_file='/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/conf/acoustic_slt_arctic_full.conf'
+config_file='/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/conf/acoustic_vctk.conf'
 cfg.configure(config_file, use_logging=False)
 
 from frontend.parameter_generation import ParameterGeneration
@@ -85,7 +120,7 @@ from frontend.mean_variance_norm import MeanVarianceNorm
 
 #norm_info_file = '/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/experiments/slt_arctic_full/acoustic_model/data/norm_info_mgc_lf0_vuv_bap_187_MVN.dat'
 #norm_info_file = '/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/experiments/slt_arctic_full/acoustic_model/data/norm_info_mgc_lf0_vuv_bap_63_MVN.dat'
-norm_info_file = '/Tmp/sotelo/data/merlin/blizzard/acoustic/norm_info_mgc_lf0_vuv_bap_63_MVN.dat'
+norm_info_file = '/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/experiments/vctk/acoustic_model/data/norm_info_mgc_lf0_vuv_bap_63_MVN.dat'
 fid = open(norm_info_file, 'rb')
 cmp_min_max = numpy.fromfile(fid, dtype=numpy.float32)
 fid.close()
@@ -111,11 +146,10 @@ denormaliser.feature_denormalisation(
 #     'bap': '/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/experiments/slt_arctic_full/acoustic_model/data/var/bap_1'}
 
 var_file_dict = {
-    'mgc': '/Tmp/sotelo/data/merlin/blizzard/acoustic/var/mgc_60',
-    'vuv': '/Tmp/sotelo/data/merlin/blizzard/acoustic/var/vuv_1',
-    'lf0': '/Tmp/sotelo/data/merlin/blizzard/acoustic/var/lf0_1',
-    'bap': '/Tmp/sotelo/data/merlin/blizzard/acoustic/var/bap_1'}
-
+    'mgc': '/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/experiments/vctk/acoustic_model/data/var/mgc_60',
+    'vuv': '/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/experiments/vctk/acoustic_model/data/var/vuv_1',
+    'lf0': '/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/experiments/vctk/acoustic_model/data/var/lf0_1',
+    'bap': '/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/experiments/vctk/acoustic_model/data/var/bap_1'}
 
 cfg.cmp_dim = 63
 

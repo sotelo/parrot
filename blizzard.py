@@ -268,13 +268,23 @@ class Blizzard(H5PYDataset):
 
 
 class Arctic(H5PYDataset):
-    def __init__(self, which_sets, filename='slt_arctic_data.hdf5', **kwargs):
+    def __init__(self, which_sets, filename='slt_arctic_data_simple.hdf5', **kwargs):
         self.filename = filename
         super(Arctic, self).__init__(self.data_path, which_sets, **kwargs)
 
     @property
     def data_path(self):
         return os.path.join(config.data_path[0], 'slt_arctic', self.filename)
+
+
+class VCTK(H5PYDataset):
+    def __init__(self, which_sets, filename='aligned_vctk_63.hdf5', **kwargs):
+        self.filename = filename
+        super(VCTK, self).__init__(self.data_path, which_sets, **kwargs)
+
+    @property
+    def data_path(self):
+        return os.path.join(config.data_path[0], 'vctk', self.filename)
 
 
 def blizzard_stream(which_sets=('train',), batch_size=64,
@@ -515,6 +525,57 @@ def aligned_stream(
         add_flag=True)
 
     return data_stream
+
+
+def speaker_conditioned_stream(
+        which_sets=('train',), batch_size=32,
+        seq_size=50, num_examples=None,
+        sorting_mult=4):
+
+    all_sources = ('features', 'features_mask', 'labels')
+
+    dataset = VCTK(which_sets=which_sets)
+
+    sorting_size = batch_size * sorting_mult
+
+    if not num_examples:
+        num_examples = dataset.num_examples
+
+    if 'train' in which_sets:
+        print "Random order."
+        scheme = ShuffledExampleScheme(num_examples)
+    else:
+        print "Sequential order."
+        scheme = SequentialExampleScheme(num_examples)
+
+    data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
+
+    data_stream = Batch(
+        data_stream, iteration_scheme=ConstantScheme(sorting_size))
+    data_stream = Mapping(data_stream, SortMapping(_length))
+    data_stream = Unpack(data_stream)
+    data_stream = Batch(
+        data_stream, iteration_scheme=ConstantScheme(batch_size))
+
+    data_stream = Filter(
+        data_stream, lambda x: _check_batch_size(x, batch_size))
+
+    data_stream = Padding(data_stream)
+    data_stream = FilterSources(
+        data_stream, all_sources + ('speaker_index',))
+    data_stream = SourceMapping(
+        data_stream, _transpose, which_sources = all_sources)
+
+    data_stream = SegmentSequence(
+        data_stream,
+        seq_size=seq_size + 1,
+        share_value=1,
+        return_last=False,
+        add_flag=True,
+        which_sources = all_sources)
+
+    return data_stream
+
 
 if __name__ == "__main__":
     # import ipdb

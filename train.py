@@ -14,10 +14,11 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 import cPickle
 from extensions import LearningRateSchedule, Plot, TimedFinish
-from blizzard import blizzard_stream
-from utils import train_parse
+from blizzard import speaker_conditioned_stream
+from model import SpeakerConditionedParrot
+from utils import speaker_parse
 
-parser = train_parse()
+parser = speaker_parse()
 args = parser.parse_args()
 
 if args.algorithm == "adasecant":
@@ -34,63 +35,40 @@ print "Finished saving."
 w_init = initialization.IsotropicGaussian(0.01)
 b_init = initialization.Constant(0.)
 
-if args.use_spectrum:
-    print "Using smoothed spectrum."
-else:
-    print "Using MGC."
+train_stream = speaker_conditioned_stream(('train',), args.batch_size)
+valid_stream = speaker_conditioned_stream(('valid',), args.batch_size)
 
-train_stream = blizzard_stream(
-    ('train',), args.batch_size, args.seq_length, use_spectrum=args.use_spectrum)
+features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
+    next(train_stream.get_epoch_iterator())
 
-valid_stream = blizzard_stream(
-    ('valid',), args.batch_size, args.seq_length, use_spectrum=args.use_spectrum)
+print "Shapes: "
+print "features_tr.shape", features_tr.shape
+print "features_mask_tr.shape", features_mask_tr.shape
+print "labels_tr.shape", labels_tr.shape
+print "spk_tr.shape", spk_tr.shape
 
-f0_tr, f0_mask_tr, spectrum_tr, transcripts_tr, transcripts_mask_tr, \
-    start_flag_tr, voiced_tr = next(train_stream.get_epoch_iterator())
+parrot_args = {
+    'input_dim': args.input_dim,
+    'output_dim': args.output_dim,
+    'rnn_h_dim': args.rnn_h_dim,
+    'readouts_dim': args.readouts_dim,
+    'num_speakers': args.num_speakers,
+    'speaker_dim': args.speaker_dim,
+    'weights_init': w_init,
+    'biases_init': b_init,
+    'name': 'parrot'}
 
-if args.model == "simple":
-    from model import SimpleParrot as Parrot
-
-    parrot_args = {
-        'num_freq': args.num_freq,
-        'k': args.num_mixture,
-        'k_f0': args.k_f0,
-        'rnn1_h_dim': args.rnn1_size,
-        'att_size': args.size_attention,
-        'num_letters': args.num_letters,
-        'sampling_bias': 0.,
-        'attention_type': args.attention_type,
-        'attention_alignment': args.attention_alignment,
-        'weights_init': w_init,
-        'biases_init': b_init,
-        'name': 'parrot'}
-else:
-    from model import Parrot
-
-    parrot_args = {
-        'num_freq': args.num_freq,
-        'k': args.num_mixture,
-        'k_f0': args.k_f0,
-        'rnn1_h_dim': args.rnn1_size,
-        'rnn2_h_dim': args.rnn2_size,
-        'att_size': args.size_attention,
-        'num_letters': args.num_letters,
-        'sampling_bias': 0.,
-        'weights_init': w_init,
-        'biases_init': b_init,
-        'name': 'parrot'}
-
-parrot = Parrot(**parrot_args)
+parrot = SpeakerConditionedParrot(**parrot_args)
 parrot.initialize()
 
-f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask, start_flag = \
+features, features_mask, labels, speaker, start_flag = \
     parrot.symbolic_input_variables()
 
 cost, extra_updates = parrot.compute_cost(
-    f0, f0_mask, voiced, spectrum, transcripts, transcripts_mask,
-    start_flag, args.batch_size, args.seq_length)
+    features, features_mask, labels, speaker, start_flag, args.batch_size)
 
-cost.name = 'nll'
+cost_name = 'nll'
+cost.name = cost_name
 
 cg = ComputationGraph(cost)
 model = Model(cost)
@@ -165,7 +143,7 @@ if not worker or worker.is_main_worker:
             save_separately=['log'],
             use_cpickle=True,
             save_main_loop=False,
-	    before_first_epoch=True)
+            before_first_epoch=True)
         .add_condition(
             ["after_batch", "before_training"],
             predicate=OnLogRecord('valid_nll_best_so_far')),

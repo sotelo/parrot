@@ -20,6 +20,12 @@ from utils import (
 floatX = theano.config.floatX
 
 
+def _simple_normalization(x, eps=1e-5):
+    output = (x - tensor.shape_padright(x.mean(-1))) / \
+        (eps + tensor.shape_padright(x.std(-1)))
+    return output
+
+
 def _slice_last(mat, start, end):
     # Slice across the last dimension
     return mat[[slice(None)] * (mat.ndim - 1) + [slice(start, end)]]
@@ -1626,6 +1632,7 @@ class SpeakerConditionedParrot(Initializable):
             readouts_dim=1024,
             num_speakers=21,
             speaker_dim=128,
+            normalized=False,
             **kwargs):
 
         super(SpeakerConditionedParrot, self).__init__(**kwargs)
@@ -1636,6 +1643,7 @@ class SpeakerConditionedParrot(Initializable):
         self.readouts_dim = readouts_dim
         self.num_speakers = num_speakers
         self.speaker_dim = speaker_dim
+        self.normalized = normalized
 
         self.embed_speaker = LookupTable(num_speakers, speaker_dim)
 
@@ -1826,6 +1834,17 @@ class SpeakerConditionedParrot(Initializable):
         # out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
         # out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
 
+        if self.normalized:
+            to_normalize = [
+                spk_cell_h1, spk_gat_h1, spk_cell_h2, spk_gat_h2,
+                spk_cell_h3, spk_gat_h3, inp_cell_h1, inp_gat_h1,
+                inp_cell_h2, inp_gat_h2, inp_cell_h3, inp_gat_h3]
+
+            spk_cell_h1, spk_gat_h1, spk_cell_h2, spk_gat_h2, \
+                spk_cell_h3, spk_gat_h3, inp_cell_h1, inp_gat_h1, \
+                inp_cell_h2, inp_gat_h2, inp_cell_h3, inp_gat_h3 = \
+                [_simple_normalization(x) for x in to_normalize]
+
         cell_h1 = spk_cell_h1 + inp_cell_h1  # + out_cell_h1
         cell_h2 = spk_cell_h2 + inp_cell_h2  # + out_cell_h2
         cell_h3 = spk_cell_h3 + inp_cell_h3  # + out_cell_h3
@@ -1857,12 +1876,24 @@ class SpeakerConditionedParrot(Initializable):
             h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
             h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
 
+            if self.normalized:
+                to_normalize = [
+                    h1inp_h2, h1gat_h2, h1inp_h3, h1gat_h3]
+                h1inp_h2, h1gat_h2, h1inp_h3, h1gat_h3 = \
+                    [_simple_normalization(x) for x in to_normalize]
+
             h2_t = self.rnn2.apply(
                 inp_h2_t + h1inp_h2,
                 gat_h2_t + h1gat_h2,
                 h2_tm1, iterate=False)
 
             h2inp_h3, h2gat_h3 = self.h2_to_h3.apply(h2_t)
+
+            if self.normalized:
+                to_normalize = [
+                    h2inp_h3, h2gat_h3]
+                h2inp_h3, h2gat_h3 = \
+                    [_simple_normalization(x) for x in to_normalize]
 
             h3_t = self.rnn3.apply(
                 inp_h3_t + h1inp_h3 + h2inp_h3,
@@ -1877,9 +1908,17 @@ class SpeakerConditionedParrot(Initializable):
             non_sequences=[],
             outputs_info=[input_h1, input_h2, input_h3])
 
-        readouts = self.h1_to_readout.apply(h1) + \
-            self.h2_to_readout.apply(h2) + \
-            self.h3_to_readout.apply(h3) + \
+        h1_out = self.h1_to_readout.apply(h1)
+        h2_out = self.h2_to_readout.apply(h2)
+        h3_out = self.h3_to_readout.apply(h3)
+
+        if self.normalized:
+            to_normalize = [
+                h1_out, h2_out, h3_out]
+            h1_out, h2_out, h3_out = \
+                [_simple_normalization(x) for x in to_normalize]
+
+        readouts = h1_out + h2_out + h3_out + \
             self.speaker_to_readout.apply(emb_speaker)
 
         predicted_target = self.readout_to_output.apply(readouts) + \

@@ -8,7 +8,6 @@ from blocks.filter import VariableFilter
 from blocks.roles import ALGORITHM_BUFFER
 from blocks.serialization import load_parameters
 from pandas import DataFrame
-from utils import char2code
 
 matplotlib.use('Agg')
 from matplotlib import pyplot

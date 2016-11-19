@@ -3,128 +3,27 @@ import os
 from fuel import config
 from fuel.schemes import (
     ConstantScheme, ShuffledExampleScheme,
-    SequentialExampleScheme, ShuffledScheme)
+    SequentialExampleScheme)
 from fuel.transformers import (
-    AgnosticSourcewiseTransformer, Batch, Filter, FilterSources, ForceFloatX,
-    Mapping, Padding, Rename, ScaleAndShift, SortMapping, Transformer, Unpack)
+    AgnosticSourcewiseTransformer, Batch, Filter, FilterSources,
+    Mapping, Padding, SortMapping, Transformer, Unpack)
 from fuel.streams import DataStream
 
 from fuel.datasets import H5PYDataset
 
 import numpy
 
-from utils import (
-    mean_f0, mean_mgc, mean_spectrum, std_f0, std_mgc, std_spectrum,
-    audio_len_lower_limit, audio_len_upper_limit, transcripts_len_lower_limit,
-    transcripts_len_upper_limit, attention_proportion_lower_limit,
-    attention_proportion_upper_limit, mgc_lower_limit, mgc_upper_limit,
-    spectrum_lower_limit, spectrum_upper_limit, voiced_proportion_lower_limit,
-    voiced_proportion_upper_limit, min_voiced_lower_limit,
-    min_voiced_upper_limit, max_voiced_lower_limit)
-
 
 def _length(data):
     return len(data[0])
-
-
-def _remove_nans(data):
-    if numpy.any(numpy.isnan(data[-1])):
-        f0, mgc, spectrum, transcripts, voicing_str = data
-        idx = numpy.where(numpy.any(numpy.isnan(voicing_str), axis=1))[0][0]
-        data = tuple([f0[:idx], mgc[:idx], spectrum[:idx],
-                      transcripts, voicing_str[:idx]])
-    return data
-
-
-def _equalize_length(data):
-    f0, f0_mask, mgc, spectrum, \
-        transcripts, transcripts_mask, voicing_str = data
-    idx = int(f0_mask[0].sum())
-    return tuple([f0[:, :idx], f0_mask[:, :idx], mgc[:, :idx],
-                  spectrum[:, :idx], transcripts, transcripts_mask,
-                  voicing_str[:, :idx]])
-
-
-def _start_with_zero(data, n=1):
-    data[:-n] = data[n:]
-    data[-n:] = 0 * data[-n:]
-    return data
 
 
 def _transpose(data):
     return data.swapaxes(0, 1)
 
 
-def _is_nonzero(data):
-    return tuple([1. * (data[0] > 0)])
-
-
-def _zero_for_unvoiced(data):
-    # Multiply by 0 the unvoiced components. HARDCODED
-    return tuple((data[0] * data[-1],) + data[1:])
-
-
-def _clip_f0(data, ceil=300.):
-    temp_var = data[0]
-    temp_var[temp_var > ceil] = ceil
-    return tuple((temp_var,) + data[1:])
-
-
-def _filter_blizzard(data):
-    f0, mgc, spectrum, transcripts, voicing_str = data
-
-    len_f0 = len(f0)
-    len_transcripts = len(transcripts)
-    attention_proportion = len_f0 / float(len_transcripts)
-    min_mgc = mgc.min(axis=0)
-    max_mgc = mgc.max(axis=0)
-    min_spectrum = spectrum.min(axis=0)
-    max_spectrum = spectrum.max(axis=0)
-    voiced_proportion = (f0 > 0).mean()
-    min_voiced = f0[f0 > 0].min()
-    max_voiced = f0[f0 > 0].max()
-
-    return len_f0 >= audio_len_lower_limit and \
-        len_f0 <= audio_len_upper_limit and \
-        len_transcripts >= transcripts_len_lower_limit and \
-        len_transcripts <= transcripts_len_upper_limit and \
-        attention_proportion >= attention_proportion_lower_limit and \
-        attention_proportion <= attention_proportion_upper_limit and \
-        (min_mgc >= mgc_lower_limit).all() and \
-        (max_mgc <= mgc_upper_limit).all() and \
-        (min_spectrum >= spectrum_lower_limit).all() and \
-        (max_spectrum <= spectrum_upper_limit).all() and \
-        voiced_proportion >= voiced_proportion_lower_limit and \
-        voiced_proportion <= voiced_proportion_upper_limit and \
-        min_voiced >= min_voiced_lower_limit and \
-        min_voiced <= min_voiced_upper_limit and \
-        max_voiced >= max_voiced_lower_limit and \
-        not numpy.isnan(voicing_str).any()
-
-
 def _check_batch_size(data, batch_size):
     return len(data[0]) == batch_size
-
-
-def _batch_quantize(data, q_levels=256):
-
-    eps = numpy.float64(1e-5)
-
-    data -= data.min(axis=1)[:, None]
-    data *= ((q_levels - eps) / data.max(axis=1)[:, None])
-    data += eps / 2
-
-    data = data.astype('int32')
-
-    return data
-
-
-def _standardize(data):
-    data = data.astype('int64')
-    mind = data.min(axis=1, keepdims=True).astype('float32')
-    maxd = data.max(axis=1, keepdims=True).astype('float32')
-    data = (data - mind) / (maxd - mind)
-    return 2. * data - 1.
 
 
 class SegmentSequence(Transformer):
@@ -257,237 +156,36 @@ class SourceMapping(AgnosticSourcewiseTransformer):
         return numpy.asarray(self.mapping(source_data))
 
 
-class Blizzard(H5PYDataset):
-    def __init__(self, which_sets, filename='tbptt_blizzard.hdf5', **kwargs):
+class VoiceData(H5PYDataset):
+    def __init__(self, voice, which_sets, filename=None, **kwargs):
+
+        assert voice in ['arctic', 'blizzard', 'vctk']
+
+        self.voice = voice
+
+        if filename is None:
+            if voice == 'arctic':
+                filename = 'aligned_arctic_63.hdf5'
+            elif voice == 'blizzard':
+                filename = 'aligned_blizzard_63.hdf5'
+            elif voice == 'vctk':
+                filename = 'aligned_vctk_63.hdf5'
+
         self.filename = filename
-        super(Blizzard, self).__init__(self.data_path, which_sets, **kwargs)
+        super(VoiceData, self).__init__(self.data_path, which_sets, **kwargs)
 
     @property
     def data_path(self):
-        return os.path.join(config.data_path[0], 'blizzard', self.filename)
+        return os.path.join(config.data_path[0], self.voice, self.filename)
 
 
-class Arctic(H5PYDataset):
-    def __init__(self, which_sets, filename='slt_arctic_data_simple.hdf5', **kwargs):
-        self.filename = filename
-        super(Arctic, self).__init__(self.data_path, which_sets, **kwargs)
-
-    @property
-    def data_path(self):
-        return os.path.join(config.data_path[0], 'slt_arctic', self.filename)
-
-
-class VCTK(H5PYDataset):
-    def __init__(self, which_sets, filename='aligned_vctk_63.hdf5', **kwargs):
-        self.filename = filename
-        super(VCTK, self).__init__(self.data_path, which_sets, **kwargs)
-
-    @property
-    def data_path(self):
-        return os.path.join(config.data_path[0], 'vctk', self.filename)
-
-
-def blizzard_stream(which_sets=('train',), batch_size=64,
-                    seq_length=100, num_examples=None, sorting_mult=20,
-                    which_sources=None, use_spectrum=True):
-
-    all_sources = ('f0', 'f0_mask', 'mgc', 'spectrum',
-                   'transcripts', 'transcripts_mask', 'voicing_str',)
-
-    if not which_sources:
-        which_sources = ('f0', 'f0_mask', 'start_flag',
-                         'voiced', 'transcripts', 'transcripts_mask')
-
-        if use_spectrum:
-            representation = 'spectrum'
-        else:
-            representation = 'mgc'
-
-        which_sources += (representation,)
-
-    dataset = Blizzard(
-        which_sets=which_sets, filename="mgc_blizzard_sentence.hdf5")
-    sorting_size = batch_size * sorting_mult
-
-    if not num_examples:
-        num_examples = dataset.num_examples
-
-    data_stream = DataStream(
-        dataset, iteration_scheme=ShuffledExampleScheme(num_examples))
-
-    # data_stream = Filter(data_stream, _filter_blizzard)
-
-    data_stream = Mapping(data_stream, _clip_f0)
-
-    data_stream = Batch(
-        data_stream, iteration_scheme=ConstantScheme(sorting_size))
-    data_stream = Mapping(data_stream, SortMapping(_length))
-    data_stream = Unpack(data_stream)
-    data_stream = Batch(
-        data_stream, iteration_scheme=ConstantScheme(batch_size))
-
-    data_stream = Filter(
-        data_stream, lambda x: _check_batch_size(x, batch_size))
-
-    data_stream = Padding(data_stream)
-    data_stream = FilterSources(data_stream, all_sources)
-    data_stream = Mapping(data_stream, _equalize_length)
-    data_stream = FilterSources(data_stream, all_sources)
-
-    data_stream = SourceMapping(
-        data_stream, _transpose,
-        which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'))
-    data_stream = SegmentSequence(
-        data_stream,
-        seq_length + 1,
-        return_last=False,
-        which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'),
-        add_flag=True,
-        share_value=True)
-
-    data_stream = Mapping(
-        data_stream, _is_nonzero, add_sources=('voiced',))
-
-    data_stream = ScaleAndShift(
-        data_stream,
-        scale=1 / std_spectrum,
-        shift=-mean_spectrum / std_spectrum,
-        which_sources=('spectrum',))
-
-    data_stream = ScaleAndShift(
-        data_stream,
-        scale=1 / std_f0,
-        shift=-mean_f0 / std_f0,
-        which_sources=('f0',))
-
-    data_stream = ScaleAndShift(
-        data_stream,
-        scale=1 / std_mgc,
-        shift=-mean_mgc / std_mgc,
-        which_sources=('mgc',))
-
-    data_stream = Mapping(data_stream, _zero_for_unvoiced)
-    data_stream = ForceFloatX(data_stream, which_sources=which_sources)
-    data_stream = FilterSources(data_stream, which_sources)
-    data_stream = Rename(data_stream, {representation: 'data'})
-
-    return data_stream
-
-
-def raw_stream(
-        which_sets=('train',), batch_size=64, seq_length=100,
-        num_examples=None, frame_size=4, num_levels=256):
-
-    dataset = Blizzard(which_sets=which_sets)
-
-    if not num_examples:
-        num_examples = dataset.num_examples
-
-    data_stream = DataStream(
-        dataset, iteration_scheme=ShuffledScheme(
-            batch_size=batch_size, examples=num_examples))
-
-    data_stream = Filter(
-        data_stream, lambda x: _check_batch_size(x, batch_size))
-
-    data_stream = SourceMapping(data_stream, _standardize)
-    data_stream = SourceMapping(
-        data_stream, lambda x: _batch_quantize(x, num_levels))
-    data_stream = SourceMapping(data_stream, _transpose)
-
-    data_stream = SegmentSequence(
-        data_stream,
-        seq_length + frame_size,
-        return_last=False,
-        add_flag=True,
-        share_value=frame_size)
-
-    data_stream = Rename(data_stream, {'features': 'data'})
-
-    return data_stream
-
-
-def phonemes_stream(
-        which_sets=('train',), batch_size=64, num_examples=None,
-        sample_flag=False):
-
-    dataset = Blizzard(
-        which_sets=which_sets, filename="sp_blizzard_19h_phon.hdf5")
-
-    if not num_examples:
-        num_examples = dataset.num_examples
-
-    data_stream = DataStream(
-        dataset, iteration_scheme=ShuffledExampleScheme(num_examples))
-
-    # data_stream = Filter(data_stream, _filter_blizzard)
-
-    data_stream = Mapping(data_stream, _clip_f0)
-
-    data_stream = Batch(
-        data_stream, iteration_scheme=ConstantScheme(batch_size))
-    # data_stream = Mapping(data_stream, SortMapping(_length))
-    # data_stream = Unpack(data_stream)
-    # data_stream = Batch(
-    #     data_stream, iteration_scheme=ConstantScheme(batch_size))
-
-    data_stream = Filter(
-        data_stream, lambda x: _check_batch_size(x, batch_size))
-
-    # data_stream = Padding(data_stream)
-    # data_stream = FilterSources(data_stream, all_sources)
-    # data_stream = Mapping(data_stream, _equalize_length)
-    # data_stream = FilterSources(data_stream, all_sources)
-
-    data_stream = SourceMapping(
-        data_stream, _transpose,
-        which_sources=('f0', 'sp', 'phonemes'))
-    # data_stream = SegmentSequence(
-    #     data_stream,
-    #     seq_length + 1,
-    #     return_last=False,
-    #     which_sources=('f0', 'f0_mask', 'mgc', 'spectrum', 'voicing_str'),
-    #     add_flag=True,
-    #     share_value=True)
-
-    data_stream = Mapping(
-        data_stream, _is_nonzero, add_sources=('voiced',))
-
-    data_stream = ScaleAndShift(
-        data_stream,
-        scale=1 / std_spectrum,
-        shift=-mean_spectrum / std_spectrum,
-        which_sources=('sp',))
-
-    data_stream = ScaleAndShift(
-        data_stream,
-        scale=1 / std_f0,
-        shift=-mean_f0 / std_f0,
-        which_sources=('f0',))
-
-    if not sample_flag:
-        data_stream = Mapping(data_stream, _zero_for_unvoiced)
-
-    data_stream = SourceMapping(
-        data_stream, _start_with_zero,
-        which_sources=('f0', 'voiced', 'phonemes'))
-
-    data_stream = ForceFloatX(
-        data_stream, which_sources=('f0', 'sp', 'voiced'))
-    # data_stream = FilterSources(data_stream, which_sources)
-    data_stream = Rename(data_stream, {'sp': 'data'})
-
-    return data_stream
-
-
-def aligned_stream(
-        which_sets=('train',), batch_size=32,
-        seq_size=50, num_examples=None,
-        sorting_mult=4):
+def parrot_stream(
+        voice, use_speaker=False, which_sets=('train',), batch_size=32,
+        seq_size=50, num_examples=None, sorting_mult=4):
 
     all_sources = ('features', 'features_mask', 'labels')
 
-    dataset = Arctic(which_sets=which_sets)
+    dataset = VoiceData(voice=voice, which_sets=which_sets)
 
     sorting_size = batch_size * sorting_mult
 
@@ -495,10 +193,8 @@ def aligned_stream(
         num_examples = dataset.num_examples
 
     if 'train' in which_sets:
-        print "Random order."
         scheme = ShuffledExampleScheme(num_examples)
     else:
-        print "Sequential order."
         scheme = SequentialExampleScheme(num_examples)
 
     data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
@@ -514,57 +210,16 @@ def aligned_stream(
         data_stream, lambda x: _check_batch_size(x, batch_size))
 
     data_stream = Padding(data_stream)
-    data_stream = FilterSources(data_stream, all_sources)
-    data_stream = SourceMapping(data_stream, _transpose)
 
-    data_stream = SegmentSequence(
-        data_stream,
-        seq_size=seq_size + 1,
-        share_value=1,
-        return_last=False,
-        add_flag=True)
-
-    return data_stream
-
-
-def speaker_conditioned_stream(
-        which_sets=('train',), batch_size=32,
-        seq_size=50, num_examples=None,
-        sorting_mult=4):
-
-    all_sources = ('features', 'features_mask', 'labels')
-
-    dataset = VCTK(which_sets=which_sets)
-
-    sorting_size = batch_size * sorting_mult
-
-    if not num_examples:
-        num_examples = dataset.num_examples
-
-    if 'train' in which_sets:
-        print "Random order."
-        scheme = ShuffledExampleScheme(num_examples)
+    if use_speaker:
+        data_stream = FilterSources(
+            data_stream, all_sources + ('speaker_index',))
     else:
-        print "Sequential order."
-        scheme = SequentialExampleScheme(num_examples)
+        data_stream = FilterSources(
+            data_stream, all_sources)
 
-    data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
-
-    data_stream = Batch(
-        data_stream, iteration_scheme=ConstantScheme(sorting_size))
-    data_stream = Mapping(data_stream, SortMapping(_length))
-    data_stream = Unpack(data_stream)
-    data_stream = Batch(
-        data_stream, iteration_scheme=ConstantScheme(batch_size))
-
-    data_stream = Filter(
-        data_stream, lambda x: _check_batch_size(x, batch_size))
-
-    data_stream = Padding(data_stream)
-    data_stream = FilterSources(
-        data_stream, all_sources + ('speaker_index',))
     data_stream = SourceMapping(
-        data_stream, _transpose, which_sources = all_sources)
+        data_stream, _transpose, which_sources=all_sources)
 
     data_stream = SegmentSequence(
         data_stream,
@@ -572,21 +227,11 @@ def speaker_conditioned_stream(
         share_value=1,
         return_last=False,
         add_flag=True,
-        which_sources = all_sources)
+        which_sources=all_sources)
 
     return data_stream
 
 
 if __name__ == "__main__":
-    # import ipdb
-    # data_stream = raw_stream(
-    #     ('train',), batch_size=64, seq_length=128 * 4, frame_size=4)
-    # epoch_iterator = data_stream.get_epoch_iterator()
-    # for _ in range(1000):
-    #     print _, next(epoch_iterator)[1]
-
-    # train_stream = blizzard_stream(batch_size=64, sorting_mult=20)
-    # epoch_iterator = train_stream.get_epoch_iterator()
-
-    data_stream = aligned_stream()
+    data_stream = parrot_stream('vctk', True)
     print next(data_stream.get_epoch_iterator())[0].shape

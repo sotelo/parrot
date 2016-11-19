@@ -14,12 +14,11 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 import cPickle
 from extensions import LearningRateSchedule, Plot, TimedFinish
-from blizzard import speaker_conditioned_stream
-from model import SpeakerConditionedParrot
-from utils import speaker_parse
+from datasets import parrot_stream
+from model import Parrot
+from utils import train_parse
 
-parser = speaker_parse()
-args = parser.parse_args()
+args = train_parse()
 
 if args.algorithm == "adasecant":
     args.lr_schedule = False
@@ -35,30 +34,34 @@ print "Finished saving."
 w_init = initialization.IsotropicGaussian(0.01)
 b_init = initialization.Constant(0.)
 
-train_stream = speaker_conditioned_stream(('train',), args.batch_size)
-valid_stream = speaker_conditioned_stream(('valid',), args.batch_size)
+train_stream = parrot_stream(
+    args.dataset, args.use_speaker, ('train',), args.batch_size)
+valid_stream = parrot_stream(
+    args.dataset, args.use_speaker, ('valid',), args.batch_size)
 
-features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
-    next(train_stream.get_epoch_iterator())
+example_batch = next(train_stream.get_epoch_iterator())
 
-print "Shapes: "
-print "features_tr.shape", features_tr.shape
-print "features_mask_tr.shape", features_mask_tr.shape
-print "labels_tr.shape", labels_tr.shape
-print "spk_tr.shape", spk_tr.shape
+for idx, source in enumerate(train_stream.sources):
+    if source != 'start_flag':
+        print source, "shape: ", example_batch[idx].shape
+    else:
+        print source, ": ", example_batch[idx]
 
 parrot_args = {
     'input_dim': args.input_dim,
     'output_dim': args.output_dim,
     'rnn_h_dim': args.rnn_h_dim,
     'readouts_dim': args.readouts_dim,
+    'layer_normalization': args.layer_normalization,
+    'use_speaker': args.use_speaker,
     'num_speakers': args.num_speakers,
     'speaker_dim': args.speaker_dim,
+    'which_cost': args.which_cost,
     'weights_init': w_init,
     'biases_init': b_init,
     'name': 'parrot'}
 
-parrot = SpeakerConditionedParrot(**parrot_args)
+parrot = Parrot(**parrot_args)
 parrot.initialize()
 
 features, features_mask, labels, speaker, start_flag = \

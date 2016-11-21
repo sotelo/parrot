@@ -156,6 +156,12 @@ class SourceMapping(AgnosticSourcewiseTransformer):
         return numpy.asarray(self.mapping(source_data))
 
 
+class AddConstantSource(Mapping):
+    def __init__(self, data_stream, constant, name, **kwargs):
+        super(AddConstantSource, self).__init__(
+            data_stream, lambda x: (constant,), (name,), **kwargs)
+
+
 class VoiceData(H5PYDataset):
     def __init__(self, voice, which_sets, filename=None, **kwargs):
 
@@ -181,7 +187,7 @@ class VoiceData(H5PYDataset):
 
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
-        seq_size=50, num_examples=None, sorting_mult=4):
+        seq_size=50, num_examples=None, sorting_mult=4, noise_level=None):
 
     all_sources = ('features', 'features_mask', 'labels')
 
@@ -228,6 +234,10 @@ def parrot_stream(
         return_last=False,
         add_flag=True,
         which_sources=all_sources)
+
+    if noise_level is not None:
+        data_stream = AddConstantSource(
+            data_stream, noise_level, 'feedback_noise_level')
 
     return data_stream
 

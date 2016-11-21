@@ -22,6 +22,12 @@ def train_parse():
                         help='size of time wise RNN hidden state')
     parser.add_argument('--readouts_dim', type=int, default=1024,
                         help='size of readouts')
+    parser.add_argument('--weak_feedback', type=bool, default=False,
+                        help='feedback to top layer')
+    parser.add_argument('--full_feedback', type=bool, default=False,
+                        help='feedback to all layers')
+    parser.add_argument('--feedback_noise_level', type=float, default=None,
+                        help='how much noise in the feedback from audio')
     parser.add_argument('--layer_normalization', type=bool, default=False,
                         help='use simple layer normalization')
     parser.add_argument('--which_cost', type=str, default='MSE',

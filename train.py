@@ -35,14 +35,22 @@ w_init = initialization.IsotropicGaussian(0.01)
 b_init = initialization.Constant(0.)
 
 train_stream = parrot_stream(
-    args.dataset, args.use_speaker, ('train',), args.batch_size)
+    args.dataset, args.use_speaker, ('train',), args.batch_size,
+    noise_level=args.feedback_noise_level)
+
+if args.feedback_noise_level is None:
+    val_noise_level = None
+else:
+    val_noise_level = 0.
+
 valid_stream = parrot_stream(
-    args.dataset, args.use_speaker, ('valid',), args.batch_size)
+    args.dataset, args.use_speaker, ('valid',), args.batch_size,
+    noise_level=val_noise_level)
 
 example_batch = next(train_stream.get_epoch_iterator())
 
 for idx, source in enumerate(train_stream.sources):
-    if source != 'start_flag':
+    if source not in ['start_flag', 'feedback_noise_level']:
         print source, "shape: ", example_batch[idx].shape
     else:
         print source, ": ", example_batch[idx]
@@ -52,6 +60,9 @@ parrot_args = {
     'output_dim': args.output_dim,
     'rnn_h_dim': args.rnn_h_dim,
     'readouts_dim': args.readouts_dim,
+    'weak_feedback': args.weak_feedback,
+    'full_feedback': args.full_feedback,
+    'feedback_noise_level': args.feedback_noise_level,
     'layer_normalization': args.layer_normalization,
     'use_speaker': args.use_speaker,
     'num_speakers': args.num_speakers,

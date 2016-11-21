@@ -74,8 +74,9 @@ else:
         features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
             next(test_stream.get_epoch_iterator())
     else:
-        features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
+        features_tr, features_mask_tr, labels_tr, start_flag_tr = \
             next(test_stream.get_epoch_iterator())
+        spk_tr = None
 
 if args.speaker_id and saved_args.use_speaker:
     spk_tr = spk_tr * 0 + args.speaker_id
@@ -86,11 +87,20 @@ if args.mix and saved_args.use_speaker:
         args.mix * parameters['/parrot/lookuptable.W'][10] + \
         (1 - args.mix) * parameters['/parrot/lookuptable.W'][11]
 
+# Set default values for old config files.
+if not hasattr(saved_args, 'weak_feedback'):
+    saved_args.weak_feedback = False
+if not hasattr(saved_args, 'full_feedback'):
+    saved_args.full_feedback = False
+
 parrot_args = {
     'input_dim': saved_args.input_dim,
     'output_dim': saved_args.output_dim,
     'rnn_h_dim': saved_args.rnn_h_dim,
     'readouts_dim': saved_args.readouts_dim,
+    'weak_feedback': saved_args.weak_feedback,
+    'full_feedback': saved_args.full_feedback,
+    'feedback_noise_level': None,
     'layer_normalization': saved_args.layer_normalization,
     'use_speaker': saved_args.use_speaker,
     'num_speakers': saved_args.num_speakers,

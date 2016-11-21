@@ -37,7 +37,6 @@ def cost_gmm(y, mu, sig, weight):
     Computes the cost.
 
     """
-
     n_dim = y.ndim
     shape_y = y.shape
 
@@ -91,18 +90,21 @@ def sample_gmm(mu, sigma, weight, theano_rng):
 class Parrot(Initializable, Random):
     def __init__(
             self,
-            input_dim=420,
-            output_dim=63,
-            rnn_h_dim=1024,
-            readouts_dim=1024,
-            layer_normalization=False,
-            use_speaker=False,
-            num_speakers=21,
-            speaker_dim=128,
-            which_cost='MSE',
-            k_gmm=20,
-            sampling_bias=0,
-            epsilon=1e-5,
+            input_dim=420,  # Dimension of the text labels
+            output_dim=63,  # Dimension of vocoder fram
+            rnn_h_dim=1024,  # Size of rnn hidden state
+            readouts_dim=1024,  # Size of readouts (summary of rnn)
+            weak_feedback=False,  # Feedback to the top rnn layer
+            full_feedback=False,  # Feedback to all rnn layers
+            feedback_noise_level=None,  # Amount of noise in feedback
+            layer_normalization=False,  # Use simple normalization?
+            use_speaker=False,  # Condition on the speaker id?
+            num_speakers=21,  # How many speakers there are?
+            speaker_dim=128,  # Size of speaker embedding
+            which_cost='MSE',  # Train with MSE or GMM
+            k_gmm=20,  # How many components in the GMM
+            sampling_bias=0,  # Make samples more likely (Graves13)
+            epsilon=1e-5,  # Numerical stabilities
             **kwargs):
 
         super(Parrot, self).__init__(**kwargs)
@@ -114,6 +116,11 @@ class Parrot(Initializable, Random):
         self.layer_normalization = layer_normalization
         self.which_cost = which_cost
         self.use_speaker = use_speaker
+        self.full_feedback = full_feedback
+        self.feedback_noise_level = feedback_noise_level
+
+        if self.feedback_noise_level is not None:
+            self.noise_level_var = tensor.scalar('feedback_noise_level')
 
         self.rnn1 = GatedRecurrent(dim=rnn_h_dim, name='rnn1')
         self.rnn2 = GatedRecurrent(dim=rnn_h_dim, name='rnn2')
@@ -136,24 +143,6 @@ class Parrot(Initializable, Random):
             input_dim=input_dim,
             output_dims=[rnn_h_dim, 2 * rnn_h_dim],
             name='inp_to_h3')
-
-        # self.out_to_h1 = Fork(
-        #     output_names=['rnn1_inputs', 'rnn1_gates'],
-        #     input_dim=output_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='out_to_h1')
-
-        # self.out_to_h2 = Fork(
-        #     output_names=['rnn2_inputs', 'rnn2_gates'],
-        #     input_dim=output_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='out_to_h2')
-
-        # self.out_to_h3 = Fork(
-        #     output_names=['rnn3_inputs', 'rnn3_gates'],
-        #     input_dim=output_dim,
-        #     output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-        #     name='out_to_h3')
 
         self.h1_to_readout = Linear(
             input_dim=rnn_h_dim,
@@ -210,9 +199,6 @@ class Parrot(Initializable, Random):
             self.inp_to_h1,
             self.inp_to_h2,
             self.inp_to_h3,
-            # self.out_to_h1,
-            # self.out_to_h2,
-            # self.out_to_h3,
             self.h1_to_readout,
             self.h2_to_readout,
             self.h3_to_readout,
@@ -270,6 +256,34 @@ class Parrot(Initializable, Random):
                 self.speaker_to_readout,
                 self.speaker_to_output]
 
+        if full_feedback:
+            self.out_to_h2 = Fork(
+                output_names=['rnn2_inputs', 'rnn2_gates'],
+                input_dim=output_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='out_to_h2')
+
+            self.out_to_h3 = Fork(
+                output_names=['rnn3_inputs', 'rnn3_gates'],
+                input_dim=output_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='out_to_h3')
+            self.children += [
+                self.out_to_h2,
+                self.out_to_h3]
+            weak_feedback = True
+
+        self.weak_feedback = weak_feedback
+
+        if weak_feedback:
+            self.out_to_h1 = Fork(
+                output_names=['rnn1_inputs', 'rnn1_gates'],
+                input_dim=output_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='out_to_h1')
+            self.children += [
+                self.out_to_h1]
+
     def symbolic_input_variables(self):
         features = tensor.tensor3('features')
         features_mask = tensor.matrix('features_mask')
@@ -314,7 +328,6 @@ class Parrot(Initializable, Random):
         if speaker is None:
             assert not self.use_speaker
 
-        # input_features = features[:-1]
         target_features = features[1:]
         mask = features_mask[1:]
         labels = labels[1:]
@@ -322,10 +335,6 @@ class Parrot(Initializable, Random):
         inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
         inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
         inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
-
-        # out_cell_h1, out_gat_h1 = self.out_to_h1.apply(input_features)
-        # out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
-        # out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
 
         if self.layer_normalization:
             to_normalize = [
@@ -336,12 +345,46 @@ class Parrot(Initializable, Random):
                 inp_cell_h3, inp_gat_h3 = \
                 [_simple_normalization(x) for x in to_normalize]
 
-        cell_h1 = inp_cell_h1  # + out_cell_h1
-        cell_h2 = inp_cell_h2  # + out_cell_h2
-        cell_h3 = inp_cell_h3  # + out_cell_h3
-        gat_h1 = inp_gat_h1  # + out_gat_h1
-        gat_h2 = inp_gat_h2  # + out_gat_h2
-        gat_h3 = inp_gat_h3  # + out_gat_h3
+        cell_h1 = inp_cell_h1
+        cell_h2 = inp_cell_h2
+        cell_h3 = inp_cell_h3
+        gat_h1 = inp_gat_h1
+        gat_h2 = inp_gat_h2
+        gat_h3 = inp_gat_h3
+
+        if self.weak_feedback:
+            input_features = features[:-1]
+
+            if self.feedback_noise_level:
+                noise = self.theano_rng.normal(
+                    size=input_features.shape,
+                    avg=0., std=1.)
+                input_features += self.noise_level_var * noise
+
+            out_cell_h1, out_gat_h1 = self.out_to_h1.apply(input_features)
+            if self.layer_normalization:
+                to_normalize = [
+                    out_cell_h1, out_gat_h1]
+                out_cell_h1, out_gat_h1 = \
+                    [_simple_normalization(x) for x in to_normalize]
+
+            cell_h1 += out_cell_h1
+            gat_h1 += out_gat_h1
+
+        if self.full_feedback:
+            assert self.weak_feedback
+            out_cell_h2, out_gat_h2 = self.out_to_h2.apply(input_features)
+            out_cell_h3, out_gat_h3 = self.out_to_h3.apply(input_features)
+            if self.layer_normalization:
+                to_normalize = [
+                    out_cell_h2, out_gat_h2, out_cell_h3, out_gat_h3]
+                out_cell_h2, out_gat_h2, out_cell_h3, out_gat_h3 = \
+                    [_simple_normalization(x) for x in to_normalize]
+
+            cell_h2 += out_cell_h2
+            gat_h2 += out_gat_h2
+            cell_h3 += out_cell_h3
+            gat_h3 += out_gat_h3
 
         if self.use_speaker:
             speaker = speaker[:, 0]
@@ -461,7 +504,6 @@ class Parrot(Initializable, Random):
                         coeff.shape) + self.epsilon
 
             cost = cost_gmm(target_features, mu, sigma, coeff)
-            # cost = tensor.sum((mu - target_features) ** 2, axis=-1)
 
         cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
 
@@ -497,19 +539,22 @@ class Parrot(Initializable, Random):
                 inp_cell_h3, inp_gat_h3 = \
                 [_simple_normalization(x) for x in to_normalize]
 
-        cell_h1 = inp_cell_h1  # + out_cell_h1
-        cell_h2 = inp_cell_h2  # + out_cell_h2
-        cell_h3 = inp_cell_h3  # + out_cell_h3
-        gat_h1 = inp_gat_h1  # + out_gat_h1
-        gat_h2 = inp_gat_h2  # + out_gat_h2
-        gat_h3 = inp_gat_h3  # + out_gat_h3
+        cell_h1 = inp_cell_h1
+        cell_h2 = inp_cell_h2
+        cell_h3 = inp_cell_h3
+        gat_h1 = inp_gat_h1
+        gat_h2 = inp_gat_h2
+        gat_h3 = inp_gat_h3
 
         if self.use_speaker:
             speaker = speaker[:, 0]
             emb_speaker = self.embed_speaker.apply(speaker)
+
             # Applied before the broadcast.
             spk_readout = self.speaker_to_readout.apply(emb_speaker)
             spk_output = self.speaker_to_output.apply(emb_speaker)
+
+            # Add dimension to repeat with time.
             emb_speaker = tensor.shape_padleft(emb_speaker)
 
             spk_cell_h1, spk_gat_h1 = self.speaker_to_h1.apply(emb_speaker)
@@ -525,28 +570,53 @@ class Parrot(Initializable, Random):
                     spk_cell_h3, spk_gat_h3, = \
                     [_simple_normalization(x) for x in to_normalize]
 
-            cell_h1 = spk_cell_h1 + cell_h1
-            cell_h2 = spk_cell_h2 + cell_h2
-            cell_h3 = spk_cell_h3 + cell_h3
-            gat_h1 = spk_gat_h1 + gat_h1
-            gat_h2 = spk_gat_h2 + gat_h2
-            gat_h3 = spk_gat_h3 + gat_h3
+            cell_h1 += spk_cell_h1
+            cell_h2 += spk_cell_h2
+            cell_h3 += spk_cell_h3
+            gat_h1 += spk_gat_h1
+            gat_h2 += spk_gat_h2
+            gat_h3 += spk_gat_h3
 
         def sample_step(
                 inp_cell_h1_t, inp_gat_h1_t, inp_cell_h2_t, inp_gat_h2_t,
                 inp_cell_h3_t, inp_gat_h3_t, x_tm1, h1_tm1, h2_tm1, h3_tm1):
 
-            # out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
-            # out_cell_h2_t, out_gat_h2_t = self.out_to_h2.apply(x_tm1)
-            # out_cell_h3_t, out_gat_h3_t = self.out_to_h3.apply(x_tm1)
+            cell_h1_t = inp_cell_h1_t
+            cell_h2_t = inp_cell_h2_t
+            cell_h3_t = inp_cell_h3_t
 
-            cell_h1_t = inp_cell_h1_t  # + out_cell_h1_t
-            cell_h2_t = inp_cell_h2_t  # + out_cell_h2_t
-            cell_h3_t = inp_cell_h3_t  # + out_cell_h3_t
+            gat_h1_t = inp_gat_h1_t
+            gat_h2_t = inp_gat_h2_t
+            gat_h3_t = inp_gat_h3_t
 
-            gat_h1_t = inp_gat_h1_t  # + out_gat_h1_t
-            gat_h2_t = inp_gat_h2_t  # + out_gat_h2_t
-            gat_h3_t = inp_gat_h3_t  # + out_gat_h3_t
+            if self.weak_feedback:
+                out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
+
+                if self.layer_normalization:
+                    to_normalize = [
+                        out_cell_h1_t, out_gat_h1_t]
+                    out_cell_h1_t, out_gat_h1_t = \
+                        [_simple_normalization(x) for x in to_normalize]
+
+                cell_h1_t += out_cell_h1_t
+                gat_h1_t += out_gat_h1_t
+
+            if self.full_feedback:
+                out_cell_h2_t, out_gat_h2_t = self.out_to_h2.apply(x_tm1)
+                out_cell_h3_t, out_gat_h3_t = self.out_to_h3.apply(x_tm1)
+
+                if self.layer_normalization:
+                    to_normalize = [
+                        out_cell_h2_t, out_gat_h2_t,
+                        out_cell_h3_t, out_gat_h3_t]
+                    out_cell_h2_t, out_gat_h2_t, \
+                        out_cell_h3_t, out_gat_h3_t = \
+                        [_simple_normalization(x) for x in to_normalize]
+
+                cell_h2_t += out_cell_h2_t
+                cell_h3_t += out_cell_h3_t
+                gat_h2_t += out_gat_h2_t
+                gat_h3_t += out_gat_h3_t
 
             h1_t = self.rnn1.apply(
                 cell_h1_t,

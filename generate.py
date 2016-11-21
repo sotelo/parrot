@@ -202,7 +202,7 @@ def generate_wav(
 
         run_process(
             'rm -f {ap} {sp} {f0} {bap} {lf0} {mgc} {mgc}_b0 {mgc}_p_b0 '
-            '{mgc}_p_mgc {mgc}_p_r0 {mgc}_r0 {cmp}'.format(
+            '{mgc}_p_mgc {mgc}_p_r0 {mgc}_r0 {cmp} weight'.format(
                 ap=files['ap'], sp=files['sp'], f0=files['f0'],
                 bap=files['bap'], lf0=files['lf0'], mgc=files['mgc'],
                 cmp=base + '.cmp'))

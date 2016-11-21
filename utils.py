@@ -50,7 +50,7 @@ def train_parse():
     parser.add_argument('--time_limit', type=float, default=None,
                         help='time in hours that the model will run')
     parser.add_argument('--use_speaker', type=bool,
-                        default=True,
+                        default=False,
                         help='use speaker conditioning information')
     parser.add_argument('--num_speakers', type=int,
                         default=21,
@@ -100,6 +100,12 @@ def sample_parse():
                         help='Generate new sentences or sentences from valid')
     parser.add_argument('--save_dir', type=str,
                         default=os.environ['RESULTS_DIR'],
+                        help='save dir directory')
+    parser.add_argument('--sptk_dir', type=str,
+                        default='/Tmp/sotelo/code/merlin/tools/bin/SPTK-3.9/',
+                        help='save dir directory')
+    parser.add_argument('--world_dir', type=str,
+                        default='/Tmp/sotelo/code/merlin/tools/bin/WORLD/',
                         help='save dir directory')
 
     args = parser.parse_args()

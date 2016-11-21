@@ -14,11 +14,14 @@ from blocks.model import Model
 from datasets import parrot_stream
 from model import Parrot
 from utils import sample_parse
+from generate import generate_wav
 
 from io_funcs.binary_io import BinaryIOCollection
+from frontend.mean_variance_norm import MeanVarianceNorm
 
 logging.basicConfig()
 
+data_dir = os.environ['FUEL_DATA_PATH']
 args = sample_parse()
 
 with open(os.path.join(
@@ -33,16 +36,19 @@ with open(os.path.join(
         "best_" + args.experiment_name + ".tar"), 'rb') as src:
     parameters = load_parameters(src)
 
-args.save_dir = '/Tmp/sotelo/results/vctk/'
-
 if args.new_sentences:
     numpy.random.seed(1)
     spk_tr = numpy.random.random_integers(
         1, saved_args.num_speakers - 1, (args.num_samples, 1))
     spk_tr = numpy.int8(spk_tr)
 
-    print '/Tmp/sotelo/data/vctk/new_sentences_no_silence.npy'
-    labels_tr = numpy.load('/Tmp/sotelo/data/vctk/new_sentences.npy')
+    new_sentences_file = os.path.join(
+        data_dir, args.dataset,
+        'new_sentences.npy')
+
+    print 'Loading sentences from : ' + new_sentences_file
+
+    labels_tr = numpy.load(new_sentences_file)
     lengths_tr = [len(x) for x in labels_tr]
     max_length = max(lengths_tr)
     features_mask_tr = numpy.zeros(
@@ -104,12 +110,16 @@ cost, extra_updates = parrot.compute_cost(
 model = Model(cost)
 model.set_parameter_values(parameters)
 
+print "Successfully loaded the parameters."
+
 x_sample = parrot.sample_model(
     labels_tr, features_mask_tr, spk_tr, args.num_samples)
 
+print "Successfully sampled the parrot."
+
 x_sample = x_sample[0].swapaxes(0, 1)
 
-io_fun = BinaryIOCollection()
+io_funcs = BinaryIOCollection()
 
 gen_file_list = []
 for i, this_sample in enumerate(x_sample):
@@ -117,25 +127,15 @@ for i, this_sample in enumerate(x_sample):
     file_name = os.path.join(
         args.save_dir, 'samples',
         args.samples_name + '_' + str(i) + ".cmp")
-    io_fun.array_to_binary_file(this_sample, file_name)
+    io_funcs.array_to_binary_file(this_sample, file_name)
     gen_file_list.append(file_name)
 
 print "End of sampling."
 
-# BIIIIG MESSSS
+norm_info_file = os.path.join(
+    data_dir, args.dataset,
+    'norm_info_mgc_lf0_vuv_bap_63_MVN.dat')
 
-# importing from merlin
-import configuration
-cfg=configuration.cfg
-config_file='/Tmp/sotelo/code/merlin/egs/build_your_own_voice/s1/conf/acoustic_vctk.conf'
-cfg.configure(config_file, use_logging=False)
-
-from frontend.parameter_generation import ParameterGeneration
-from frontend.mean_variance_norm import MeanVarianceNorm
-
-#norm_info_file = '/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/experiments/slt_arctic_full/acoustic_model/data/norm_info_mgc_lf0_vuv_bap_187_MVN.dat'
-#norm_info_file = '/Tmp/sotelo/code/merlin/egs/slt_arctic/s1/experiments/slt_arctic_full/acoustic_model/data/norm_info_mgc_lf0_vuv_bap_63_MVN.dat'
-norm_info_file = '/Tmp/sotelo/data/vctk/norm_info_mgc_lf0_vuv_bap_63_MVN.dat'
 fid = open(norm_info_file, 'rb')
 cmp_min_max = numpy.fromfile(fid, dtype=numpy.float32)
 fid.close()
@@ -143,35 +143,57 @@ cmp_min_max = cmp_min_max.reshape((2, -1))
 cmp_min_vector = cmp_min_max[0, ]
 cmp_max_vector = cmp_min_max[1, ]
 
-# assert saved_args.output_dim == 63
-denormaliser = MeanVarianceNorm(feature_dimension=saved_args.output_dim)
+denormaliser = MeanVarianceNorm(
+    feature_dimension=saved_args.output_dim)
 denormaliser.feature_denormalisation(
     gen_file_list, gen_file_list, cmp_min_vector, cmp_max_vector)
 
-var_file_dict = {
-    'mgc': '/Tmp/sotelo/data/vctk/var/mgc_60',
-    'vuv': '/Tmp/sotelo/data/vctk/var/vuv_1',
-    'lf0': '/Tmp/sotelo/data/vctk/var/lf0_1',
-    'bap': '/Tmp/sotelo/data/vctk/var/bap_1'}
+# This code was adapted from Merlin. I should add the license.
 
-cfg.cmp_dim = 63
+out_dimension_dict = {'bap': 1, 'lf0': 1, 'mgc': 60, 'vuv': 1}
+stream_start_index = {}
+file_extension_dict = {
+    'mgc': '.mgc', 'bap': '.bap', 'lf0': '.lf0',
+    'dur': '.dur', 'cmp': '.cmp'}
+gen_wav_features = ['mgc', 'lf0', 'bap']
 
-cfg.out_dimension_dict = {'bap': 1, 'lf0': 1, 'mgc': 60, 'vuv': 1}
+dimension_index = 0
+for feature_name in out_dimension_dict.keys():
+    stream_start_index[feature_name] = dimension_index
+    dimension_index += out_dimension_dict[feature_name]
 
-generator = ParameterGeneration(
-    gen_wav_features=cfg.gen_wav_features,
-    enforce_silence=cfg.enforce_silence)
-generator.acoustic_decomposition(
-    gen_file_list,
-    cfg.cmp_dim,
-    cfg.out_dimension_dict,
-    cfg.file_extension_dict,
-    var_file_dict,
-    do_MLPG=False,
-    cfg=cfg)
+findex = 0
+flen = len(gen_file_list)
+for file_name in gen_file_list:
+    findex = findex + 1
+    dir_name = os.path.dirname(file_name)
+    file_id = os.path.splitext(os.path.basename(file_name))[0]
+    features, frame_number = io_funcs.load_binary_file_frame(file_name, 63)
 
-from generate import generate_wav
+    for feature_name in gen_wav_features:
+
+        current_features = features[
+            :, stream_start_index[feature_name]:
+            stream_start_index[feature_name] +
+            out_dimension_dict[feature_name]]
+
+        gen_features = current_features
+
+        if feature_name in ['lf0', 'F0']:
+            if 'vuv' in stream_start_index.keys():
+                vuv_feature = features[
+                    :, stream_start_index['vuv']:stream_start_index['vuv'] + 1]
+
+                for i in xrange(frame_number):
+                    if vuv_feature[i, 0] < 0.5:
+                        gen_features[i, 0] = -1.0e+10  # self.inf_float
+
+        new_file_name = os.path.join(
+            dir_name, file_id + file_extension_dict[feature_name])
+
+        io_funcs.array_to_binary_file(gen_features, new_file_name)
 
 generate_wav(
     os.path.join(args.save_dir, 'samples'),
-    [args.samples_name + '_' + str(i) for i in range(args.num_samples)], cfg)
+    [args.samples_name + '_' + str(i) for i in range(args.num_samples)],
+    sptk_dir=args.sptk_dir, world_dir=args.world_dir)

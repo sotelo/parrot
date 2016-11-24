@@ -94,6 +94,7 @@ class Parrot(Initializable, Random):
             output_dim=63,  # Dimension of vocoder fram
             rnn_h_dim=1024,  # Size of rnn hidden state
             readouts_dim=1024,  # Size of readouts (summary of rnn)
+            labels_type='full',  # full or phoneme labels
             weak_feedback=False,  # Feedback to the top rnn layer
             full_feedback=False,  # Feedback to all rnn layers
             feedback_noise_level=None,  # Amount of noise in feedback
@@ -113,11 +114,14 @@ class Parrot(Initializable, Random):
         self.output_dim = output_dim
         self.rnn_h_dim = rnn_h_dim
         self.readouts_dim = readouts_dim
+        self.labels_type = labels_type
         self.layer_normalization = layer_normalization
         self.which_cost = which_cost
         self.use_speaker = use_speaker
         self.full_feedback = full_feedback
         self.feedback_noise_level = feedback_noise_level
+
+        assert labels_type in ['full', 'phonemes']
 
         if self.feedback_noise_level is not None:
             self.noise_level_var = tensor.scalar('feedback_noise_level')
@@ -207,6 +211,16 @@ class Parrot(Initializable, Random):
             self.h2_to_h3,
             self.readout_to_output]
 
+        if labels_type == 'phonemes':
+            # TODO: num_phonemes is argument
+            num_phonemes = 43
+            self.embed_label = LookupTable(
+                num_phonemes,
+                input_dim,
+                name='embed_label')
+            self.children += [
+                self.embed_label]
+
         if use_speaker:
             self.num_speakers = num_speakers
             self.speaker_dim = speaker_dim
@@ -285,9 +299,15 @@ class Parrot(Initializable, Random):
                 self.out_to_h1]
 
     def symbolic_input_variables(self):
+
         features = tensor.tensor3('features')
         features_mask = tensor.matrix('features_mask')
-        labels = tensor.tensor3('labels')
+
+        if self.labels_type == 'full':
+            labels = tensor.tensor3('labels')
+        elif self.labels_type == 'phonemes':
+            labels = tensor.imatrix('labels')
+
         start_flag = tensor.scalar('start_flag')
 
         if self.use_speaker:
@@ -331,6 +351,9 @@ class Parrot(Initializable, Random):
         target_features = features[1:]
         mask = features_mask[1:]
         labels = labels[1:]
+
+        if self.labels_type == 'phonemes':
+            labels = self.embed_label.apply(labels)
 
         inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
         inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
@@ -518,6 +541,9 @@ class Parrot(Initializable, Random):
     @application
     def sample_model_fun(
             self, labels, labels_mask, speaker, num_samples):
+
+        if self.labels_type == 'phonemes':
+            labels = self.embed_label.apply(labels)
 
         initial_h1, last_h1, initial_h2, last_h2, \
             initial_h3, last_h3, use_last_states = \
@@ -719,7 +745,14 @@ class Parrot(Initializable, Random):
             self.sample_model_fun(
                 labels, features_mask, speaker, num_samples)
 
+        theano_inputs = [labels]
+        numpy_inputs = (labels_tr,)
+
+        if self.use_speaker:
+            theano_inputs += [speaker]
+            numpy_inputs += (speaker_tr,)
+
         return function(
-            [labels, speaker],
+            theano_inputs,
             [sample_x],
-            updates=updates)(labels_tr, speaker_tr)
+            updates=updates)(*numpy_inputs)

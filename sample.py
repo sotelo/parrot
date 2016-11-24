@@ -68,7 +68,7 @@ else:
 
     test_stream = parrot_stream(
         args.dataset, saved_args.use_speaker, ('test',), args.num_samples,
-        args.num_steps, sorting_mult=1)
+        args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type)
 
     if saved_args.use_speaker:
         features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
@@ -92,12 +92,15 @@ if not hasattr(saved_args, 'weak_feedback'):
     saved_args.weak_feedback = False
 if not hasattr(saved_args, 'full_feedback'):
     saved_args.full_feedback = False
+if not hasattr(saved_args, 'labels_type'):
+    saved_args.labels_type = 'full'
 
 parrot_args = {
     'input_dim': saved_args.input_dim,
     'output_dim': saved_args.output_dim,
     'rnn_h_dim': saved_args.rnn_h_dim,
     'readouts_dim': saved_args.readouts_dim,
+    'labels_type': saved_args.labels_type,
     'weak_feedback': saved_args.weak_feedback,
     'full_feedback': saved_args.full_feedback,
     'feedback_noise_level': None,

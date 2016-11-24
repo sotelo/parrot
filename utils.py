@@ -30,6 +30,8 @@ def train_parse():
                         help='how much noise in the feedback from audio')
     parser.add_argument('--layer_normalization', type=bool, default=False,
                         help='use simple layer normalization')
+    parser.add_argument('--labels_type', type=str, default='full',
+                        help='which kind of labels to use: full or phoneme')
     parser.add_argument('--which_cost', type=str, default='MSE',
                         help='which cost to use MSE or GMM')
     parser.add_argument('--batch_size', type=int, default=8,

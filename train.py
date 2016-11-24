@@ -36,7 +36,7 @@ b_init = initialization.Constant(0.)
 
 train_stream = parrot_stream(
     args.dataset, args.use_speaker, ('train',), args.batch_size,
-    noise_level=args.feedback_noise_level)
+    noise_level=args.feedback_noise_level, labels_type=args.labels_type)
 
 if args.feedback_noise_level is None:
     val_noise_level = None
@@ -45,13 +45,14 @@ else:
 
 valid_stream = parrot_stream(
     args.dataset, args.use_speaker, ('valid',), args.batch_size,
-    noise_level=val_noise_level)
+    noise_level=val_noise_level, labels_type=args.labels_type)
 
 example_batch = next(train_stream.get_epoch_iterator())
 
 for idx, source in enumerate(train_stream.sources):
     if source not in ['start_flag', 'feedback_noise_level']:
-        print source, "shape: ", example_batch[idx].shape
+        print source, "shape: ", example_batch[idx].shape, \
+            source, "dtype: ", example_batch[idx].dtype
     else:
         print source, ": ", example_batch[idx]
 
@@ -60,6 +61,7 @@ parrot_args = {
     'output_dim': args.output_dim,
     'rnn_h_dim': args.rnn_h_dim,
     'readouts_dim': args.readouts_dim,
+    'labels_type': args.labels_type,
     'weak_feedback': args.weak_feedback,
     'full_feedback': args.full_feedback,
     'feedback_noise_level': args.feedback_noise_level,

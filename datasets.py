@@ -6,7 +6,7 @@ from fuel.schemes import (
     SequentialExampleScheme)
 from fuel.transformers import (
     AgnosticSourcewiseTransformer, Batch, Filter, FilterSources,
-    Mapping, Padding, SortMapping, Transformer, Unpack)
+    Mapping, Padding, Rename, SortMapping, Transformer, Unpack)
 from fuel.streams import DataStream
 
 from fuel.datasets import H5PYDataset
@@ -187,7 +187,10 @@ class VoiceData(H5PYDataset):
 
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
-        seq_size=50, num_examples=None, sorting_mult=4, noise_level=None):
+        seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
+        labels_type='full'):
+
+    assert labels_type in ['full', 'phonemes']
 
     all_sources = ('features', 'features_mask', 'labels')
 
@@ -204,6 +207,10 @@ def parrot_stream(
         scheme = SequentialExampleScheme(num_examples)
 
     data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
+
+    if labels_type == 'phonemes':
+        data_stream = Rename(data_stream, {'labels': 'full_labels'})
+        data_stream = Rename(data_stream, {'phonemes': 'labels'})
 
     data_stream = Batch(
         data_stream, iteration_scheme=ConstantScheme(sorting_size))

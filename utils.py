@@ -36,6 +36,8 @@ def train_parse():
                         help='which cost to use MSE or GMM')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='minibatch size')
+    parser.add_argument('--seq_size', type=int, default=50,
+                        help='length of the training sequences')
     parser.add_argument('--save_every', type=int, default=500,
                         help='save frequency')
     parser.add_argument('--learning_rate', type=float, default=1e-4,

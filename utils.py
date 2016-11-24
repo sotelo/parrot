@@ -115,6 +115,12 @@ def sample_parse():
     parser.add_argument('--world_dir', type=str,
                         default='/Tmp/sotelo/code/merlin/tools/bin/WORLD/',
                         help='save dir directory')
+    parser.add_argument('--process_originals', type=bool,
+                        default=False,
+                        help='Process examples from the dataset or not')
+    parser.add_argument('--do_post_filtering', type=bool,
+                        default=False,
+                        help='do post filtering process')
 
     args = parser.parse_args()
     if args.dataset not in args.save_dir:

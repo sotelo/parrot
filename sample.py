@@ -16,9 +16,6 @@ from model import Parrot
 from utils import sample_parse
 from generate import generate_wav
 
-from io_funcs.binary_io import BinaryIOCollection
-from frontend.mean_variance_norm import MeanVarianceNorm
-
 logging.basicConfig()
 
 data_dir = os.environ['FUEL_DATA_PATH']
@@ -132,81 +129,30 @@ print "Successfully sampled the parrot."
 
 x_sample = x_sample[0].swapaxes(0, 1)
 
-io_funcs = BinaryIOCollection()
-
-gen_file_list = []
-for i, this_sample in enumerate(x_sample):
-    this_sample = this_sample[:int(features_mask_tr.sum(axis=0)[i])]
-    file_name = os.path.join(
-        args.save_dir, 'samples',
-        args.samples_name + '_' + str(i) + ".cmp")
-    io_funcs.array_to_binary_file(this_sample, file_name)
-    gen_file_list.append(file_name)
-
-print "End of sampling."
-
 norm_info_file = os.path.join(
     data_dir, args.dataset,
     'norm_info_mgc_lf0_vuv_bap_63_MVN.dat')
 
-fid = open(norm_info_file, 'rb')
-cmp_min_max = numpy.fromfile(fid, dtype=numpy.float32)
-fid.close()
-cmp_min_max = cmp_min_max.reshape((2, -1))
-cmp_min_vector = cmp_min_max[0, ]
-cmp_max_vector = cmp_min_max[1, ]
+for i, this_sample in enumerate(x_sample):
+    this_sample = this_sample[:int(features_mask_tr.sum(axis=0)[i])]
+    generate_wav(
+        this_sample,
+        os.path.join(args.save_dir, 'samples'),
+        args.samples_name + '_' + str(i),
+        sptk_dir=args.sptk_dir,
+        world_dir=args.world_dir,
+        norm_info_file=norm_info_file,
+        do_post_filtering=args.do_post_filtering)
 
-denormaliser = MeanVarianceNorm(
-    feature_dimension=saved_args.output_dim)
-denormaliser.feature_denormalisation(
-    gen_file_list, gen_file_list, cmp_min_vector, cmp_max_vector)
-
-# This code was adapted from Merlin. I should add the license.
-
-out_dimension_dict = {'bap': 1, 'lf0': 1, 'mgc': 60, 'vuv': 1}
-stream_start_index = {}
-file_extension_dict = {
-    'mgc': '.mgc', 'bap': '.bap', 'lf0': '.lf0',
-    'dur': '.dur', 'cmp': '.cmp'}
-gen_wav_features = ['mgc', 'lf0', 'bap']
-
-dimension_index = 0
-for feature_name in out_dimension_dict.keys():
-    stream_start_index[feature_name] = dimension_index
-    dimension_index += out_dimension_dict[feature_name]
-
-findex = 0
-flen = len(gen_file_list)
-for file_name in gen_file_list:
-    findex = findex + 1
-    dir_name = os.path.dirname(file_name)
-    file_id = os.path.splitext(os.path.basename(file_name))[0]
-    features, frame_number = io_funcs.load_binary_file_frame(file_name, 63)
-
-    for feature_name in gen_wav_features:
-
-        current_features = features[
-            :, stream_start_index[feature_name]:
-            stream_start_index[feature_name] +
-            out_dimension_dict[feature_name]]
-
-        gen_features = current_features
-
-        if feature_name in ['lf0', 'F0']:
-            if 'vuv' in stream_start_index.keys():
-                vuv_feature = features[
-                    :, stream_start_index['vuv']:stream_start_index['vuv'] + 1]
-
-                for i in xrange(frame_number):
-                    if vuv_feature[i, 0] < 0.5:
-                        gen_features[i, 0] = -1.0e+10  # self.inf_float
-
-        new_file_name = os.path.join(
-            dir_name, file_id + file_extension_dict[feature_name])
-
-        io_funcs.array_to_binary_file(gen_features, new_file_name)
-
-generate_wav(
-    os.path.join(args.save_dir, 'samples'),
-    [args.samples_name + '_' + str(i) for i in range(args.num_samples)],
-    sptk_dir=args.sptk_dir, world_dir=args.world_dir)
+if args.process_originals:
+    assert not args.new_sentences
+    for i, this_sample in enumerate(features_tr.swapaxes(0, 1)):
+        this_sample = this_sample[:int(features_mask_tr.sum(axis=0)[i])]
+        generate_wav(
+            this_sample,
+            os.path.join(args.save_dir, 'samples'),
+            'original_' + args.samples_name + '_' + str(i),
+            sptk_dir=args.sptk_dir,
+            world_dir=args.world_dir,
+            norm_info_file=norm_info_file,
+            do_post_filtering=args.do_post_filtering)

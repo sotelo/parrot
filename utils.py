@@ -54,6 +54,9 @@ def train_parse():
     parser.add_argument('--lr_schedule', type=bool,
                         default=False,
                         help='whether to use the learning rate schedule')
+    parser.add_argument('--adaptive_noise', type=bool,
+                        default=False,
+                        help='whether to use adaptive noise')
     parser.add_argument('--load_experiment', type=str,
                         default=None,
                         help='name of the experiment that will be loaded')
@@ -78,6 +81,9 @@ def train_parse():
     args = parser.parse_args()
     if args.dataset not in args.save_dir:
         args.save_dir = os.path.join(args.save_dir, args.dataset)
+
+    if args.adaptive_noise:
+        args.batch_size = 1
 
     return args
 

@@ -90,6 +90,23 @@ cost.name = cost_name
 
 cg = ComputationGraph(cost)
 model = Model(cost)
+
+gradients = None
+if args.adaptive_noise:
+    from graph import apply_adaptive_noise
+
+    cost, cg, gradients, noise_brick = \
+        apply_adaptive_noise(
+            computation_graph=cg,
+            cost=cost,
+            variables=cg.parameters,
+            num_examples=900,
+            parameters=model.get_parameter_dict().values())
+
+    model = Model(cost)
+    cost_name = 'nll'
+    cost.name = cost_name
+
 parameters = cg.parameters
 
 if args.algorithm == "adam":
@@ -102,6 +119,7 @@ algorithm = GradientDescent(
     cost=cost,
     parameters=parameters,
     step_rule=step_rule,
+    gradients=gradients,
     on_unused_sources='warn')
 algorithm.add_updates(extra_updates)
 

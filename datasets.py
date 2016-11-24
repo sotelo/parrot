@@ -190,9 +190,12 @@ def parrot_stream(
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
         labels_type='full'):
 
-    assert labels_type in ['full', 'phonemes']
+    assert labels_type in ['full', 'phonemes', 'unconditional']
 
-    all_sources = ('features', 'features_mask', 'labels')
+    all_sources = ('features', 'features_mask')
+
+    if labels_type != 'unconditional':
+        all_sources += ('labels', )
 
     dataset = VoiceData(voice=voice, which_sets=which_sets)
 

@@ -121,7 +121,7 @@ class Parrot(Initializable, Random):
         self.full_feedback = full_feedback
         self.feedback_noise_level = feedback_noise_level
 
-        assert labels_type in ['full', 'phonemes']
+        assert labels_type in ['full', 'phonemes', 'unconditional']
 
         if self.feedback_noise_level is not None:
             self.noise_level_var = tensor.scalar('feedback_noise_level')
@@ -129,24 +129,6 @@ class Parrot(Initializable, Random):
         self.rnn1 = GatedRecurrent(dim=rnn_h_dim, name='rnn1')
         self.rnn2 = GatedRecurrent(dim=rnn_h_dim, name='rnn2')
         self.rnn3 = GatedRecurrent(dim=rnn_h_dim, name='rnn3')
-
-        self.inp_to_h1 = Fork(
-            output_names=['rnn1_inputs', 'rnn1_gates'],
-            input_dim=input_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='inp_to_h1')
-
-        self.inp_to_h2 = Fork(
-            output_names=['rnn2_inputs', 'rnn2_gates'],
-            input_dim=input_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='inp_to_h2')
-
-        self.inp_to_h3 = Fork(
-            output_names=['rnn3_inputs', 'rnn3_gates'],
-            input_dim=input_dim,
-            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-            name='inp_to_h3')
 
         self.h1_to_readout = Linear(
             input_dim=rnn_h_dim,
@@ -200,9 +182,6 @@ class Parrot(Initializable, Random):
             self.rnn1,
             self.rnn2,
             self.rnn3,
-            self.inp_to_h1,
-            self.inp_to_h2,
-            self.inp_to_h3,
             self.h1_to_readout,
             self.h2_to_readout,
             self.h3_to_readout,
@@ -211,15 +190,39 @@ class Parrot(Initializable, Random):
             self.h2_to_h3,
             self.readout_to_output]
 
-        if labels_type == 'phonemes':
-            # TODO: num_phonemes is argument
-            num_phonemes = 43
-            self.embed_label = LookupTable(
-                num_phonemes,
-                input_dim,
-                name='embed_label')
+        if labels_type != 'unconditional':
+            self.inp_to_h1 = Fork(
+                output_names=['rnn1_inputs', 'rnn1_gates'],
+                input_dim=input_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='inp_to_h1')
+
+            self.inp_to_h2 = Fork(
+                output_names=['rnn2_inputs', 'rnn2_gates'],
+                input_dim=input_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='inp_to_h2')
+
+            self.inp_to_h3 = Fork(
+                output_names=['rnn3_inputs', 'rnn3_gates'],
+                input_dim=input_dim,
+                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+                name='inp_to_h3')
+
             self.children += [
-                self.embed_label]
+                self.inp_to_h1,
+                self.inp_to_h2,
+                self.inp_to_h3]
+
+            if labels_type == 'phonemes':
+                # TODO: num_phonemes is argument
+                num_phonemes = 43
+                self.embed_label = LookupTable(
+                    num_phonemes,
+                    input_dim,
+                    name='embed_label')
+                self.children += [
+                    self.embed_label]
 
         if use_speaker:
             self.num_speakers = num_speakers
@@ -307,6 +310,8 @@ class Parrot(Initializable, Random):
             labels = tensor.tensor3('labels')
         elif self.labels_type == 'phonemes':
             labels = tensor.imatrix('labels')
+        elif self.labels_type == 'unconditional':
+            labels = None
 
         start_flag = tensor.scalar('start_flag')
 
@@ -348,32 +353,46 @@ class Parrot(Initializable, Random):
         if speaker is None:
             assert not self.use_speaker
 
+        if labels is None:
+            assert self.labels_type == 'unconditional'
+
         target_features = features[1:]
         mask = features_mask[1:]
-        labels = labels[1:]
 
-        if self.labels_type == 'phonemes':
-            labels = self.embed_label.apply(labels)
+        cell_shape = (mask.shape[0], batch_size, self.rnn_h_dim)
+        gat_shape = (mask.shape[0], batch_size, 2 * self.rnn_h_dim)
+        cell_h1 = tensor.zeros(cell_shape, dtype=floatX)
+        cell_h2 = tensor.zeros(cell_shape, dtype=floatX)
+        cell_h3 = tensor.zeros(cell_shape, dtype=floatX)
+        gat_h1 = tensor.zeros(gat_shape, dtype=floatX)
+        gat_h2 = tensor.zeros(gat_shape, dtype=floatX)
+        gat_h3 = tensor.zeros(gat_shape, dtype=floatX)
 
-        inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
-        inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
-        inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
+        if self.labels_type != 'unconditional':
+            labels = labels[1:]
 
-        if self.layer_normalization:
-            to_normalize = [
-                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
-                inp_cell_h3, inp_gat_h3]
+            if self.labels_type == 'phonemes':
+                labels = self.embed_label.apply(labels)
 
-            inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
-                inp_cell_h3, inp_gat_h3 = \
-                [_simple_normalization(x) for x in to_normalize]
+            inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
+            inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
+            inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
 
-        cell_h1 = inp_cell_h1
-        cell_h2 = inp_cell_h2
-        cell_h3 = inp_cell_h3
-        gat_h1 = inp_gat_h1
-        gat_h2 = inp_gat_h2
-        gat_h3 = inp_gat_h3
+            if self.layer_normalization:
+                to_normalize = [
+                    inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
+                    inp_cell_h3, inp_gat_h3]
+
+                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
+                    inp_cell_h3, inp_gat_h3 = \
+                    [_simple_normalization(x) for x in to_normalize]
+
+            cell_h1 += inp_cell_h1
+            cell_h2 += inp_cell_h2
+            cell_h3 += inp_cell_h3
+            gat_h1 += inp_gat_h1
+            gat_h2 += inp_gat_h2
+            gat_h3 += inp_gat_h3
 
         if self.weak_feedback:
             input_features = features[:-1]
@@ -542,9 +561,6 @@ class Parrot(Initializable, Random):
     def sample_model_fun(
             self, labels, labels_mask, speaker, num_samples):
 
-        if self.labels_type == 'phonemes':
-            labels = self.embed_label.apply(labels)
-
         initial_h1, last_h1, initial_h2, last_h2, \
             initial_h3, last_h3, use_last_states = \
             self.initial_states(num_samples)
@@ -552,25 +568,42 @@ class Parrot(Initializable, Random):
         initial_x = numpy.zeros(
             (num_samples, self.output_dim), dtype=floatX)
 
-        inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
-        inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
-        inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
+        # This is a bit of a cheat. Also, labels_mask are only
+        # used here.
+        seq_size = labels_mask.shape[0]
 
-        if self.layer_normalization:
-            to_normalize = [
-                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
-                inp_cell_h3, inp_gat_h3]
+        cell_shape = (seq_size, num_samples, self.rnn_h_dim)
+        gat_shape = (seq_size, num_samples, 2 * self.rnn_h_dim)
+        cell_h1 = tensor.zeros(cell_shape, dtype=floatX)
+        cell_h2 = tensor.zeros(cell_shape, dtype=floatX)
+        cell_h3 = tensor.zeros(cell_shape, dtype=floatX)
+        gat_h1 = tensor.zeros(gat_shape, dtype=floatX)
+        gat_h2 = tensor.zeros(gat_shape, dtype=floatX)
+        gat_h3 = tensor.zeros(gat_shape, dtype=floatX)
 
-            inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
-                inp_cell_h3, inp_gat_h3 = \
-                [_simple_normalization(x) for x in to_normalize]
+        if self.labels_type != 'unconditional':
+            if self.labels_type == 'phonemes':
+                labels = self.embed_label.apply(labels)
 
-        cell_h1 = inp_cell_h1
-        cell_h2 = inp_cell_h2
-        cell_h3 = inp_cell_h3
-        gat_h1 = inp_gat_h1
-        gat_h2 = inp_gat_h2
-        gat_h3 = inp_gat_h3
+            inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
+            inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
+            inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
+
+            if self.layer_normalization:
+                to_normalize = [
+                    inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
+                    inp_cell_h3, inp_gat_h3]
+
+                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
+                    inp_cell_h3, inp_gat_h3 = \
+                    [_simple_normalization(x) for x in to_normalize]
+
+            cell_h1 += inp_cell_h1
+            cell_h2 += inp_cell_h2
+            cell_h3 += inp_cell_h3
+            gat_h1 += inp_gat_h1
+            gat_h2 += inp_gat_h2
+            gat_h3 += inp_gat_h3
 
         if self.use_speaker:
             speaker = speaker[:, 0]
@@ -745,8 +778,12 @@ class Parrot(Initializable, Random):
             self.sample_model_fun(
                 labels, features_mask, speaker, num_samples)
 
-        theano_inputs = [labels]
-        numpy_inputs = (labels_tr,)
+        theano_inputs = [features_mask]
+        numpy_inputs = (mask_tr,)
+
+        if self.labels_type != 'unconditional':
+            theano_inputs += [labels]
+            numpy_inputs += (labels_tr,)
 
         if self.use_speaker:
             theano_inputs += [speaker]

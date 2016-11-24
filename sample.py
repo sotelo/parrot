@@ -67,13 +67,24 @@ else:
         args.dataset, saved_args.use_speaker, ('test',), args.num_samples,
         args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type)
 
-    if saved_args.use_speaker:
-        features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
-            next(test_stream.get_epoch_iterator())
+    # TODO: Think about how to clean this code
+    if saved_args.labels_type == 'unconditional':
+        if saved_args.use_speaker:
+            features_tr, features_mask_tr, spk_tr, start_flag_tr = \
+                next(test_stream.get_epoch_iterator())
+        else:
+            features_tr, features_mask_tr, start_flag_tr = \
+                next(test_stream.get_epoch_iterator())
+            spk_tr = None
+        labels_tr = None
     else:
-        features_tr, features_mask_tr, labels_tr, start_flag_tr = \
-            next(test_stream.get_epoch_iterator())
-        spk_tr = None
+        if saved_args.use_speaker:
+            features_tr, features_mask_tr, labels_tr, spk_tr, start_flag_tr = \
+                next(test_stream.get_epoch_iterator())
+        else:
+            features_tr, features_mask_tr, labels_tr, start_flag_tr = \
+                next(test_stream.get_epoch_iterator())
+            spk_tr = None
 
 if args.speaker_id and saved_args.use_speaker:
     spk_tr = spk_tr * 0 + args.speaker_id

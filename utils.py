@@ -4,6 +4,105 @@ This file contains the arguments parser.
 """
 import argparse
 import os
+import matplotlib
+import numpy
+
+from subprocess import call
+matplotlib.use('Agg')
+from matplotlib import animation, pyplot, ticker
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+SAMPLING_RATE = 16000
+REFRESH_RATE = 100  # images per second
+
+SPTK_DIR = '/Tmp/sotelo/code/merlin/tools/bin/SPTK-3.9/'
+WORLD_DIR = '/Tmp/sotelo/code/merlin/tools/bin/WORLD/'
+
+
+def numpy_one_hot(data, n_class=None):
+    if n_class is None:
+        n_class = data.max() + 1
+    return numpy.eye(n_class)[data]
+
+
+def plot_matrix(data, ax):
+    im = ax.imshow(
+        data.T, aspect='auto', origin='lower', interpolation='nearest')
+    cax = make_axes_locatable(ax).append_axes("right", size="1%", pad=0.05)
+    cb = pyplot.colorbar(im, cax=cax)
+    tick_locator = ticker.MaxNLocator(nbins=5)
+    cb.locator = tick_locator
+    cb.ax.yaxis.set_major_locator(ticker.AutoLocator())
+    cb.update_ticks()
+
+
+def anim_to_mp4(anim, audio_file, filename, save_dir):
+    writer = animation.writers['ffmpeg']
+    writer = writer(fps=REFRESH_RATE, bitrate=SAMPLING_RATE)
+
+    filename = os.path.join(save_dir, filename)
+
+    if not hasattr(anim, '_encoded_video'):
+        anim.save(filename + '_temp.mp4', writer=writer)
+        call(['rm', filename + '.mp4'])
+        call([
+            'ffmpeg', '-i', filename + '_temp.mp4', '-i',
+            os.path.join(save_dir, audio_file), filename + '.mp4'])
+        call(['rm', filename + '_temp.mp4'])
+
+
+def full_plot(matrices, save_name):
+    n_plots = len(matrices)
+
+    f, axarr = pyplot.subplots(n_plots, 1)
+
+    for idx, mat in enumerate(matrices):
+        plot_matrix(mat, axarr[idx])
+
+    if save_name is None:
+        pyplot.show()
+    else:
+        try:
+            pyplot.savefig(
+                save_name,
+                bbox_inches='tight',
+                pad_inches=0.5)
+        except Exception:
+            print "Error building image!: " + save_name
+
+    pyplot.close()
+
+
+def create_animation(matrices, audio_file, filename, save_dir):
+    step = SAMPLING_RATE / REFRESH_RATE
+    frames = 80 * len(matrices[0]) / step
+    interval = 1000 / REFRESH_RATE
+
+    n_plots = len(matrices)
+
+    fig, axarr = pyplot.subplots(n_plots, 1)
+
+    for arr in axarr:
+        arr.set_xlim([0, len(matrices[0])])
+
+    lines = []
+    for arr in axarr:
+        vline = arr.axvline(x=0., color='k')
+        lines.append(vline)
+
+    def init():
+        for idx, mat in enumerate(matrices):
+            plot_matrix(mat, axarr[idx])
+
+    def animate(n_step):
+        for idx in range(n_plots):
+            lines[idx].set_xdata(step * n_step / 80)
+
+    anim = animation.FuncAnimation(
+        fig, animate, init_func=init,
+        frames=frames, interval=interval, blit=True)
+
+    anim_to_mp4(anim, audio_file, filename, save_dir)
 
 
 def train_parse():
@@ -28,12 +127,16 @@ def train_parse():
                         help='feedback to all layers')
     parser.add_argument('--feedback_noise_level', type=float, default=None,
                         help='how much noise in the feedback from audio')
-    parser.add_argument('--layer_normalization', type=bool, default=False,
+    parser.add_argument('--layer_norm', type=bool, default=False,
                         help='use simple layer normalization')
-    parser.add_argument('--labels_type', type=str, default='full',
+    parser.add_argument('--labels_type', type=str, default='full_labels',
                         help='which kind of labels to use: full or phoneme')
     parser.add_argument('--which_cost', type=str, default='MSE',
                         help='which cost to use MSE or GMM')
+    parser.add_argument('--attention_type', type=str, default='graves',
+                        help='which attention to use')
+    parser.add_argument('--num_characters', type=int, default=43,
+                        help='how many characters in the labels dict')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='minibatch size')
     parser.add_argument('--seq_size', type=int, default=50,
@@ -63,7 +166,7 @@ def train_parse():
                         default=False,
                         help='use speaker conditioning information')
     parser.add_argument('--num_speakers', type=int,
-                        default=21,
+                        default=22,
                         help='adam or adasecant')
     parser.add_argument('--speaker_dim', type=int,
                         default=128,
@@ -112,10 +215,10 @@ def sample_parse():
                         default=os.environ['RESULTS_DIR'],
                         help='save dir directory')
     parser.add_argument('--sptk_dir', type=str,
-                        default='/Tmp/sotelo/code/merlin/tools/bin/SPTK-3.9/',
+                        default=SPTK_DIR,
                         help='save dir directory')
     parser.add_argument('--world_dir', type=str,
-                        default='/Tmp/sotelo/code/merlin/tools/bin/WORLD/',
+                        default=WORLD_DIR,
                         help='save dir directory')
     parser.add_argument('--process_originals', type=bool,
                         default=False,
@@ -123,6 +226,9 @@ def sample_parse():
     parser.add_argument('--do_post_filtering', type=bool,
                         default=False,
                         help='do post filtering process')
+    parser.add_argument('--animation', type=bool,
+                        default=False,
+                        help='wether to do animation or no')
 
     args = parser.parse_args()
     if args.dataset not in args.save_dir:

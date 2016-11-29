@@ -99,6 +99,7 @@ class SegmentSequence(Transformer):
             self.data = next(self.child_epoch_iterator)
             idx = self.sources.index(self.which_sources[0])
             self.len_data = self.data[idx].shape[0]
+            flag = 1  # if flag is here: first part
 
         segmented_data = list(self.data)
 
@@ -110,9 +111,6 @@ class SegmentSequence(Transformer):
 
         self.step += self.seq_size
 
-        # if self.share_value:
-        #     self.step -= 1
-
         # Size of overlap:
         self.step -= self.share_value
 
@@ -120,7 +118,7 @@ class SegmentSequence(Transformer):
             self.data = None
             self.len_data = None
             self.step = 0
-            flag = 1
+            # flag = 1  # if flag is here: last part
 
         if self.add_flag:
             segmented_data.append(flag)
@@ -170,14 +168,9 @@ class VoiceData(H5PYDataset):
         self.voice = voice
 
         if filename is None:
-            if voice == 'arctic':
-                filename = 'aligned_arctic_63.hdf5'
-            elif voice == 'blizzard':
-                filename = 'aligned_blizzard_63.hdf5'
-            elif voice == 'vctk':
-                filename = 'aligned_vctk_63.hdf5'
+            filename = voice
 
-        self.filename = filename
+        self.filename = filename + '.hdf5'
         super(VoiceData, self).__init__(self.data_path, which_sets, **kwargs)
 
     @property
@@ -188,14 +181,11 @@ class VoiceData(H5PYDataset):
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full'):
+        labels_type='full_labels'):
 
-    assert labels_type in ['full', 'phonemes', 'unconditional']
-
-    all_sources = ('features', 'features_mask')
-
-    if labels_type != 'unconditional':
-        all_sources += ('labels', )
+    assert labels_type in [
+        'full_labels', 'phonemes', 'unconditional',
+        'unaligned_phonemes', 'text']
 
     dataset = VoiceData(voice=voice, which_sets=which_sets)
 
@@ -211,9 +201,18 @@ def parrot_stream(
 
     data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
 
-    if labels_type == 'phonemes':
-        data_stream = Rename(data_stream, {'labels': 'full_labels'})
-        data_stream = Rename(data_stream, {'phonemes': 'labels'})
+    segment_sources = ('features', 'features_mask')
+    all_sources = segment_sources
+
+    if labels_type != 'unconditional':
+        all_sources += ('labels', )
+        data_stream = Rename(data_stream, {labels_type: 'labels'})
+
+    if labels_type in ['full_labels', 'phonemes']:
+        segment_sources += ('labels',)
+
+    elif labels_type in ['unaligned_phonemes', 'text']:
+        all_sources += ('labels_mask', )
 
     data_stream = Batch(
         data_stream, iteration_scheme=ConstantScheme(sorting_size))
@@ -235,7 +234,7 @@ def parrot_stream(
             data_stream, all_sources)
 
     data_stream = SourceMapping(
-        data_stream, _transpose, which_sources=all_sources)
+        data_stream, _transpose, which_sources=segment_sources)
 
     data_stream = SegmentSequence(
         data_stream,
@@ -243,7 +242,7 @@ def parrot_stream(
         share_value=1,
         return_last=False,
         add_flag=True,
-        which_sources=all_sources)
+        which_sources=segment_sources)
 
     if noise_level is not None:
         data_stream = AddConstantSource(
@@ -251,7 +250,14 @@ def parrot_stream(
 
     return data_stream
 
-
 if __name__ == "__main__":
-    data_stream = parrot_stream('vctk', True)
-    print next(data_stream.get_epoch_iterator())[0].shape
+    data_stream = parrot_stream('arctic')
+    print next(data_stream.get_epoch_iterator())[-1]
+    # import ipdb; ipdb.set_trace()
+    # epoch_iterator = data_stream.get_epoch_iterator()
+
+    # new_batch = next(epoch_iterator)
+    # print '-----  New batch -----'
+    # print "features: ", new_batch[0].shape
+    # print "labels: ", new_batch[2].shape
+    # print "start_flag: ", new_batch[-1]

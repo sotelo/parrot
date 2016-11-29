@@ -67,11 +67,13 @@ parrot_args = {
     'weak_feedback': args.weak_feedback,
     'full_feedback': args.full_feedback,
     'feedback_noise_level': args.feedback_noise_level,
-    'layer_normalization': args.layer_normalization,
+    'layer_norm': args.layer_norm,
     'use_speaker': args.use_speaker,
     'num_speakers': args.num_speakers,
     'speaker_dim': args.speaker_dim,
     'which_cost': args.which_cost,
+    'num_characters': args.num_characters,
+    'attention_type': args.attention_type,
     'weights_init': w_init,
     'biases_init': b_init,
     'name': 'parrot'}
@@ -79,11 +81,12 @@ parrot_args = {
 parrot = Parrot(**parrot_args)
 parrot.initialize()
 
-features, features_mask, labels, speaker, start_flag = \
+features, features_mask, labels, labels_mask, speaker, start_flag = \
     parrot.symbolic_input_variables()
 
 cost, extra_updates = parrot.compute_cost(
-    features, features_mask, labels, speaker, start_flag, args.batch_size)
+    features, features_mask, labels, labels_mask,
+    speaker, start_flag, args.batch_size)
 
 cost_name = 'nll'
 cost.name = cost_name
@@ -120,6 +123,7 @@ valid_monitor = DataStreamMonitoring(
     monitoring_vars,
     valid_stream,
     every_n_batches=args.save_every,
+    after_epoch=False,
     prefix="valid")
 
 # Multi GPU

@@ -135,6 +135,8 @@ def train_parse():
                         help='which cost to use MSE or GMM')
     parser.add_argument('--attention_type', type=str, default='graves',
                         help='which attention to use')
+    parser.add_argument('--attention_alignment', type=float, default=1.,
+                        help='bias the alignment')
     parser.add_argument('--num_characters', type=int, default=43,
                         help='how many characters in the labels dict')
     parser.add_argument('--batch_size', type=int, default=8,
@@ -195,6 +197,10 @@ def sample_parse():
                         help='name of the experiment.')
     parser.add_argument('--sampling_bias', type=float, default=1.,
                         help='the higher the bias the smoother the samples')
+    parser.add_argument('--timing_coeff', type=float, default=1.,
+                        help='make attention go faster or slower')
+    parser.add_argument('--sharpening_coeff', type=float, default=1.,
+                        help='reduce variance of attention gaussians')
     parser.add_argument('--num_samples', type=int, default=10,
                         help='number of samples')
     parser.add_argument('--num_steps', type=int, default=2048,
@@ -229,6 +235,18 @@ def sample_parse():
     parser.add_argument('--animation', type=bool,
                         default=False,
                         help='wether to do animation or no')
+    parser.add_argument('--sample_one_step', type=bool,
+                        default=False,
+                        help='wether to only sample one step or all')
+    parser.add_argument('--use_last', type=bool,
+                        default=False,
+                        help='wether to use the best parameters or last')
+    parser.add_argument('--phrase', type=str,
+                        default=None,
+                        help='which phrase to generate')
+    parser.add_argument('--random_speaker', type=bool,
+                        default=False,
+                        help='generate with random speaker')
 
     args = parser.parse_args()
     if args.dataset not in args.save_dir:

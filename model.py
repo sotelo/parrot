@@ -133,7 +133,10 @@ class Parrot(Initializable, Random):
             epsilon=1e-5,  # Numerical stabilities
             num_characters=43,  # how many chars in the labels
             attention_type='graves',  # graves or softmax
-            attention_size=10,
+            attention_size=10,  # number of gaussians in the attention
+            attention_alignment=1.,  # audio steps per letter at initialization
+            sharpening_coeff=1.,
+            timing_coeff=1.,
             **kwargs):
 
         super(Parrot, self).__init__(**kwargs)
@@ -152,13 +155,14 @@ class Parrot(Initializable, Random):
         self.full_feedback = full_feedback
         self.feedback_noise_level = feedback_noise_level
         self.epsilon = epsilon
-        attention_alignment = 1.
 
         self.num_characters = num_characters
 
         self.attention_type = attention_type
         self.attention_alignment = attention_alignment
         self.attention_size = attention_size
+        self.sharpening_coeff = sharpening_coeff
+        self.timing_coeff = timing_coeff
 
         assert labels_type in [
             'full_labels', 'phonemes', 'unconditional', 'unaligned']
@@ -571,6 +575,7 @@ class Parrot(Initializable, Random):
                 b_t = tensor.exp(b_t) + self.epsilon
                 k_t = k_tm1 + self.attention_alignment * tensor.exp(k_t)
 
+                a_t_ = a_t
                 a_t = tensor.shape_padright(a_t)
                 b_t = tensor.shape_padright(b_t)
                 k_t_ = tensor.shape_padright(k_t)
@@ -597,6 +602,8 @@ class Parrot(Initializable, Random):
             else:
                 k_t = k_tm1
                 w_t = w_tm1
+                a_t_ = k_tm1
+                phi_t = k_tm1
 
             h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
             h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
@@ -623,9 +630,9 @@ class Parrot(Initializable, Random):
                 gat_h3_t + h1gat_h3 + h2gat_h3,
                 h3_tm1, iterate=False)
 
-            return h1_t, h2_t, h3_t, k_t, w_t
+            return h1_t, h2_t, h3_t, k_t, w_t, phi_t, a_t_
 
-        (h1, h2, h3, k, w), scan_updates = theano.scan(
+        (h1, h2, h3, k, w, phi, pi_att), scan_updates = theano.scan(
             fn=step,
             sequences=[cell_h1, gat_h1, cell_h2, gat_h2, cell_h3, gat_h3],
             non_sequences=[],
@@ -634,7 +641,9 @@ class Parrot(Initializable, Random):
                 input_h2,
                 input_h3,
                 input_k,
-                input_w])
+                input_w,
+                None,
+                None])
 
         h1_out = self.h1_to_readout.apply(h1)
         h2_out = self.h2_to_readout.apply(h2)
@@ -660,6 +669,9 @@ class Parrot(Initializable, Random):
                 predicted += self.speaker_to_output.apply(emb_speaker)
             cost = tensor.sum((predicted - target_features) ** 2, axis=-1)
 
+            next_x = predicted
+            # Dummy value for coeff
+            coeff = predicted
         elif self.which_cost == 'GMM':
             mu, sigma, coeff = predicted
             if self.use_speaker:
@@ -668,14 +680,16 @@ class Parrot(Initializable, Random):
                 sigma += spk_to_out[1]
                 coeff += spk_to_out[2]
 
-            sigma = tensor.exp(sigma - self.sampling_bias) + self.epsilon
+            # When training there should not be sampling_bias
+            sigma = tensor.exp(sigma) + self.epsilon
 
             coeff = tensor.nnet.softmax(
                 coeff.reshape(
-                    (-1, self.k_gmm)) * (1. + self.sampling_bias)).reshape(
+                    (-1, self.k_gmm))).reshape(
                         coeff.shape) + self.epsilon
 
             cost = cost_gmm(target_features, mu, sigma, coeff)
+            next_x = sample_gmm(mu, sigma, coeff, self.theano_rng)
 
         cost = (cost * mask).sum() / (mask.sum() + 1e-5) + 0. * start_flag
 
@@ -688,7 +702,9 @@ class Parrot(Initializable, Random):
             updates.append((last_k, k[-1]))
             updates.append((last_w, w[-1]))
 
-        return cost, scan_updates + updates
+        attention_vars = [next_x, k, w, coeff, phi, pi_att]
+
+        return cost, scan_updates + updates, attention_vars
 
     @application
     def sample_model_fun(
@@ -828,8 +844,9 @@ class Parrot(Initializable, Random):
                 else:
                     a_t = tensor.exp(a_t) + self.epsilon
 
-                b_t = tensor.exp(b_t) + self.epsilon
-                k_t = k_tm1 + self.attention_alignment * tensor.exp(k_t)
+                b_t = tensor.exp(b_t) * self.sharpening_coeff + self.epsilon
+                k_t = k_tm1 + self.attention_alignment * \
+                    tensor.exp(k_t) / self.timing_coeff
 
                 a_t_ = a_t
                 a_t = tensor.shape_padright(a_t)
@@ -986,4 +1003,31 @@ class Parrot(Initializable, Random):
         return function(
             theano_inputs,
             [sample_x, k, w, pi, phi, pi_att],
+            updates=updates)(*numpy_inputs)
+
+    def sample_using_input(self, data_tr, num_samples):
+        # Used to predict the values using the dataset
+
+        features, features_mask, labels, labels_mask, speaker, start_flag = \
+            self.symbolic_input_variables()
+
+        cost, updates, attention_vars = self.compute_cost(
+            features, features_mask, labels, labels_mask,
+            speaker, start_flag, num_samples)
+        sample_x, k, w, pi, phi, pi_att = attention_vars
+
+        theano_vars = [
+            features, features_mask, labels, labels_mask, speaker, start_flag]
+        theano_vars = [x for x in theano_vars if x is not None]
+        theano_vars = list(set(theano_vars))
+        theano_vars = {x.name: x for x in theano_vars}
+
+        theano_inputs = []
+        numpy_inputs = []
+
+        for key in data_tr.keys():
+            theano_inputs.append(theano_vars[key])
+            numpy_inputs.append(data_tr[key])
+
+        return function(theano_inputs, [sample_x, k, w, pi, phi, pi_att],
             updates=updates)(*numpy_inputs)

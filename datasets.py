@@ -26,6 +26,12 @@ def _check_batch_size(data, batch_size):
     return len(data[0]) == batch_size
 
 
+def _check_ratio(data, idx1, idx2, min_val, max_val):
+    ratio = len(data[idx1]) / float(len(data[idx2]))
+    # print (min_val <= ratio and ratio <= max_val)
+    return (min_val <= ratio and ratio <= max_val)
+
+
 class SegmentSequence(Transformer):
     """Segments the sequences in a batch.
 
@@ -181,7 +187,7 @@ class VoiceData(H5PYDataset):
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full_labels'):
+        labels_type='full_labels', check_ratio=False):
 
     assert labels_type in [
         'full_labels', 'phonemes', 'unconditional',
@@ -200,6 +206,13 @@ def parrot_stream(
         scheme = SequentialExampleScheme(num_examples)
 
     data_stream = DataStream.default_stream(dataset, iteration_scheme=scheme)
+
+    if check_ratio and labels_type in ['unaligned_phonemes', 'text']:
+        idx = data_stream.sources.index(labels_type)
+        min_val = 4 if labels_type == 'text' else 12.
+        max_val = 15 if labels_type == 'text' else 25.
+        data_stream = Filter(
+            data_stream, lambda x: _check_ratio(x, 0, idx, min_val, max_val))
 
     segment_sources = ('features', 'features_mask')
     all_sources = segment_sources
@@ -251,13 +264,25 @@ def parrot_stream(
     return data_stream
 
 if __name__ == "__main__":
-    data_stream = parrot_stream('arctic')
-    print next(data_stream.get_epoch_iterator())[-1]
-    # import ipdb; ipdb.set_trace()
-    # epoch_iterator = data_stream.get_epoch_iterator()
+    data_stream = parrot_stream(
+        'blizzard', labels_type='unaligned_phonemes', seq_size=10000,
+        batch_size=4000, sorting_mult=1, check_ratio=False)
 
-    # new_batch = next(epoch_iterator)
-    # print '-----  New batch -----'
-    # print "features: ", new_batch[0].shape
-    # print "labels: ", new_batch[2].shape
-    # print "start_flag: ", new_batch[-1]
+    # print next(data_stream.get_epoch_iterator())[-1]
+
+    # For Arctic, the ratio is 18 steps of features per letter.
+    data_tr = next(data_stream.get_epoch_iterator())
+    ratios = (data_tr[1].sum(0) / data_tr[3].sum(1))
+    print numpy.percentile(ratios, [0, 10, 25, 50, 75, 90, 99, 100])
+
+    # Arctic
+    # phonemes: array([ 12.84, 14.75, 15.56, 16.82, 18.16, 19.89, 48.8])
+    # text:     array([  8.2, 9.89, 10.39, 11.07, 11.91, 12.81, 24.4])
+
+    # Blizzard
+    # phonemes: array([ 6.26, 14.07, 15.11, 16.26, 17.60, 19.23, 103.33])
+    # text:     array([4.37, 9.8, 10.64, 11.62, 12.59, 13.76, 46. ])
+
+    # VCTK
+    # phonemes: array([  3., 12.39, 13.52, 15.03, 16.8, 18.96, 40.5])
+    # text:     array([  2.04, 8.43, 9.23, 10.28, 11.56, 13.03, 23.15])

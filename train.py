@@ -74,6 +74,7 @@ parrot_args = {
     'which_cost': args.which_cost,
     'num_characters': args.num_characters,
     'attention_type': args.attention_type,
+    'attention_alignment': args.attention_alignment,
     'weights_init': w_init,
     'biases_init': b_init,
     'name': 'parrot'}
@@ -84,7 +85,7 @@ parrot.initialize()
 features, features_mask, labels, labels_mask, speaker, start_flag = \
     parrot.symbolic_input_variables()
 
-cost, extra_updates = parrot.compute_cost(
+cost, extra_updates, attention_vars = parrot.compute_cost(
     features, features_mask, labels, labels_mask,
     speaker, start_flag, args.batch_size)
 
@@ -109,10 +110,12 @@ algorithm = GradientDescent(
 algorithm.add_updates(extra_updates)
 
 monitoring_vars = [cost]
+plot_names = [['train_nll', 'valid_nll']]
 
 if args.lr_schedule:
     lr = algorithm.step_rule.components[1].learning_rate
     monitoring_vars.append(lr)
+    plot_names += [['valid_learning_rate']]
 
 train_monitor = TrainingDataMonitoring(
     variables=monitoring_vars,
@@ -156,7 +159,7 @@ if not worker or worker.is_main_worker:
             before_first_epoch=True),
         Plot(
             os.path.join(save_dir, "progress", exp_name + ".png"),
-            [['train_nll', 'valid_nll']],
+            plot_names,
             every_n_batches=args.save_every,
             email=False),
         Checkpoint(

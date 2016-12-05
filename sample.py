@@ -29,9 +29,16 @@ with open(os.path.join(
 
 assert saved_args.dataset == args.dataset
 
+if args.use_last:
+    params_mode = 'last_'
+else:
+    params_mode = 'best_'
+
+args.samples_name = params_mode + args.samples_name
+
 with open(os.path.join(
         args.save_dir, "pkl",
-        "best_" + args.experiment_name + ".tar"), 'rb') as src:
+        params_mode + args.experiment_name + ".tar"), 'rb') as src:
     parameters = load_parameters(src)
 
 if args.new_sentences:
@@ -80,6 +87,22 @@ else:
     labels_mask_tr = data_tr.get('labels_mask', None)
     start_flag_tr = data_tr.get('start_flag', None)
 
+if args.random_speaker:
+    numpy.random.seed(1)
+    speaker_tr = numpy.random.random_integers(
+        1, saved_args.num_speakers - 1, (args.num_samples, 1))
+    speaker_tr = numpy.int8(speaker_tr)
+
+if args.phrase is not None:
+    import pickle
+    data_path = os.environ['FUEL_DATA_PATH']
+    char2code_path = os.path.join(data_path, args.dataset, 'char2code.pkl')
+    with open(char2code_path, 'r') as f:
+        char2code = pickle.load(f)
+    labels_tr = numpy.array([char2code[x] for x in args.phrase], dtype='int8')
+    labels_tr = numpy.tile(labels_tr, (args.num_samples, 1))
+    labels_mask_tr = numpy.ones(labels_tr.shape, dtype='float32')
+
 if args.speaker_id and saved_args.use_speaker:
     speaker_tr = speaker_tr * 0 + args.speaker_id
 
@@ -113,7 +136,10 @@ parrot_args = {
     'which_cost': saved_args.which_cost,
     'num_characters': saved_args.num_characters,
     'attention_type': saved_args.attention_type,
+    'attention_alignment': saved_args.attention_alignment,
     'sampling_bias': args.sampling_bias,
+    'sharpening_coeff': args.sharpening_coeff,
+    'timing_coeff': args.timing_coeff,
     'name': 'parrot'}
 
 parrot = Parrot(**parrot_args)
@@ -121,7 +147,7 @@ parrot = Parrot(**parrot_args)
 features, features_mask, labels, labels_mask, speaker, start_flag = \
     parrot.symbolic_input_variables()
 
-cost, extra_updates = parrot.compute_cost(
+cost, extra_updates, attention_vars = parrot.compute_cost(
     features, features_mask, labels, labels_mask,
     speaker, start_flag, args.num_samples)
 
@@ -130,8 +156,13 @@ model.set_parameter_values(parameters)
 
 print "Successfully loaded the parameters."
 
-gen_x, gen_k, gen_w, gen_pi, gen_phi, gen_pi_att = parrot.sample_model(
-    labels_tr, labels_mask_tr, features_mask_tr, speaker_tr, args.num_samples)
+if args.sample_one_step:
+    gen_x, gen_k, gen_w, gen_pi, gen_phi, gen_pi_att = \
+        parrot.sample_using_input(data_tr, args.num_samples)
+else:
+    gen_x, gen_k, gen_w, gen_pi, gen_phi, gen_pi_att = parrot.sample_model(
+        labels_tr, labels_mask_tr, features_mask_tr,
+        speaker_tr, args.num_samples)
 
 print "Successfully sampled the parrot."
 
@@ -147,15 +178,16 @@ if saved_args.labels_type in ['unaligned_phonemes', 'text']:
 
     for i in range(args.num_samples):
         this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
         this_x = gen_x[i][:this_num_steps]
         this_k = gen_k[i][:this_num_steps]
         this_w = gen_w[i][:this_num_steps]
         this_pi = gen_pi[i][:this_num_steps]
-        this_phi = gen_phi[i][:this_num_steps]
+        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
         this_pi_att = gen_pi_att[i][:this_num_steps]
 
         full_plot(
-            [this_x, this_k, this_w, this_pi, this_phi, this_pi_att],
+            [this_x, this_pi_att, this_k, this_w, this_phi],
             os.path.join(
                 args.save_dir, 'samples',
                 args.samples_name + '_' + str(i) + '.png'))
@@ -188,15 +220,17 @@ if args.process_originals:
             norm_info_file=norm_info_file,
             do_post_filtering=args.do_post_filtering)
 
+
 if args.animation:
-    if saved_args.labels_type in ['unconditional_phonemes', 'text']:
+    if saved_args.labels_type in ['unaligned_phonemes', 'text']:
         for i in range(args.num_samples):
             this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+            this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
             this_x = gen_x[i][:this_num_steps]
             this_k = gen_k[i][:this_num_steps]
             this_w = gen_w[i][:this_num_steps]
             this_pi = gen_pi[i][:this_num_steps]
-            this_phi = gen_phi[i][:this_num_steps]
+            this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
             this_pi_att = gen_pi_att[i][:this_num_steps]
             create_animation(
                 [this_x, this_pi_att, this_k, this_w, this_phi],
@@ -227,4 +261,3 @@ if args.animation:
                     'original_' + args.samples_name + '_' + str(i) + '.wav',
                     'original_' + args.samples_name + '_' + str(i),
                     os.path.join(args.save_dir, 'samples'))
-

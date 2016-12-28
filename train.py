@@ -75,6 +75,7 @@ parrot_args = {
     'num_characters': args.num_characters,
     'attention_type': args.attention_type,
     'attention_alignment': args.attention_alignment,
+    'encoder_type': args.encoder_type,
     'weights_init': w_init,
     'biases_init': b_init,
     'name': 'parrot'}

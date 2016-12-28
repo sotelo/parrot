@@ -140,6 +140,7 @@ parrot_args = {
     'sampling_bias': args.sampling_bias,
     'sharpening_coeff': args.sharpening_coeff,
     'timing_coeff': args.timing_coeff,
+    'encoder_type': saved_args.encoder_type,
     'name': 'parrot'}
 
 parrot = Parrot(**parrot_args)

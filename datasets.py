@@ -169,7 +169,7 @@ class AddConstantSource(Mapping):
 class VoiceData(H5PYDataset):
     def __init__(self, voice, which_sets, filename=None, **kwargs):
 
-        assert voice in ['arctic', 'blizzard', 'vctk']
+        assert voice in ['arctic', 'blizzard', 'dimex', 'vctk']
 
         self.voice = voice
 
@@ -187,7 +187,7 @@ class VoiceData(H5PYDataset):
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full_labels', check_ratio=False):
+        labels_type='full_labels', check_ratio=True):
 
     assert labels_type in [
         'full_labels', 'phonemes', 'unconditional',
@@ -209,8 +209,8 @@ def parrot_stream(
 
     if check_ratio and labels_type in ['unaligned_phonemes', 'text']:
         idx = data_stream.sources.index(labels_type)
-        min_val = 4 if labels_type == 'text' else 12.
-        max_val = 15 if labels_type == 'text' else 25.
+        min_val = 8 if labels_type == 'text' else 12.
+        max_val = 16 if labels_type == 'text' else 25.
         data_stream = Filter(
             data_stream, lambda x: _check_ratio(x, 0, idx, min_val, max_val))
 
@@ -265,8 +265,8 @@ def parrot_stream(
 
 if __name__ == "__main__":
     data_stream = parrot_stream(
-        'blizzard', labels_type='unaligned_phonemes', seq_size=10000,
-        batch_size=4000, sorting_mult=1, check_ratio=False)
+        'dimex', labels_type='text', seq_size=10000,
+        batch_size=4000, sorting_mult=1, check_ratio=True)
 
     # print next(data_stream.get_epoch_iterator())[-1]
 

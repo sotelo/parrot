@@ -113,6 +113,10 @@ def train_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--experiment_name', type=str, default='baseline',
                         help='name of the experiment.')
+    parser.add_argument('--encoder_type', type=str, default=None,
+                        help='which encode to use none or bidirectional')
+    parser.add_argument('--encoder_dim', type=int, default=128,
+                        help='size of hidden state of the encoder')
     parser.add_argument('--input_dim', type=int, default=420,
                         help='dimension of labels')
     parser.add_argument('--output_dim', type=int, default=63,

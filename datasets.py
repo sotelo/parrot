@@ -169,7 +169,8 @@ class AddConstantSource(Mapping):
 class VoiceData(H5PYDataset):
     def __init__(self, voice, which_sets, filename=None, **kwargs):
 
-        assert voice in ['arctic', 'blizzard', 'dimex', 'vctk']
+        assert voice in [
+            'arctic', 'blizzard', 'dimex', 'librispeech', 'pavoque', 'vctk']
 
         self.voice = voice
 

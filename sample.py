@@ -109,7 +109,7 @@ if args.speaker_id and saved_args.use_speaker:
 if args.mix and saved_args.use_speaker:
     speaker_tr = speaker_tr * 0
     parameters['/parrot/lookuptable.W'][0] = \
-        args.mix * parameters['/parrot/lookuptable.W'][10] + \
+        args.mix * parameters['/parrot/lookuptable.W'][15] + \
         (1 - args.mix) * parameters['/parrot/lookuptable.W'][11]
 
 # Set default values for old config files.
@@ -169,30 +169,6 @@ print "Successfully sampled the parrot."
 
 gen_x = gen_x.swapaxes(0, 1)
 
-if saved_args.labels_type in ['unaligned_phonemes', 'text']:
-    from utils import full_plot
-    gen_k = gen_k.swapaxes(0, 1)
-    gen_w = gen_w.swapaxes(0, 1)
-    gen_pi = gen_pi.swapaxes(0, 1)
-    gen_phi = gen_phi.swapaxes(0, 1)
-    gen_pi_att = gen_pi_att.swapaxes(0, 1)
-
-    for i in range(args.num_samples):
-        this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
-        this_x = gen_x[i][:this_num_steps]
-        this_k = gen_k[i][:this_num_steps]
-        this_w = gen_w[i][:this_num_steps]
-        this_pi = gen_pi[i][:this_num_steps]
-        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
-        this_pi_att = gen_pi_att[i][:this_num_steps]
-
-        full_plot(
-            [this_x, this_pi_att, this_k, this_w, this_phi],
-            os.path.join(
-                args.save_dir, 'samples',
-                args.samples_name + '_' + str(i) + '.png'))
-
 norm_info_file = os.path.join(
     data_dir, args.dataset,
     'norm_info_mgc_lf0_vuv_bap_63_MVN.dat')
@@ -220,6 +196,51 @@ if args.process_originals:
             world_dir=args.world_dir,
             norm_info_file=norm_info_file,
             do_post_filtering=args.do_post_filtering)
+
+
+if saved_args.labels_type in ['unaligned_phonemes', 'text']:
+    from utils import attention_plot
+    gen_phi = gen_phi.swapaxes(0, 1)
+
+    for i in range(args.num_samples):
+        this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
+        this_labels = labels_tr[i, :this_labels_length]
+        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
+
+        attention_plot(
+            this_phi,
+            os.path.join(
+                args.save_dir, 'samples',
+                args.samples_name + '_' + str(i)),
+            this_labels,
+            args.dataset,
+            saved_args.labels_type)
+
+if args.debug_plot and saved_args.labels_type in ['unaligned_phonemes', 'text']:
+    from utils import full_plot
+    gen_k = gen_k.swapaxes(0, 1)
+    gen_w = gen_w.swapaxes(0, 1)
+    gen_pi = gen_pi.swapaxes(0, 1)
+    gen_phi = gen_phi.swapaxes(0, 1)
+    gen_pi_att = gen_pi_att.swapaxes(0, 1)
+
+    for i in range(args.num_samples):
+        this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
+        this_x = gen_x[i][:this_num_steps]
+        this_k = gen_k[i][:this_num_steps]
+        this_w = gen_w[i][:this_num_steps]
+        this_pi = gen_pi[i][:this_num_steps]
+        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
+        this_pi_att = gen_pi_att[i][:this_num_steps]
+
+        full_plot(
+            [this_x, this_pi_att, this_k, this_w, this_phi],
+            os.path.join(
+                args.save_dir, 'samples',
+                args.samples_name + '_' + str(i) + '.png'))
+
 
 
 if args.animation:

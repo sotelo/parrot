@@ -6,10 +6,12 @@ import argparse
 import os
 import matplotlib
 import numpy
+import pickle
 
+from scipy.io import wavfile
 from subprocess import call
 matplotlib.use('Agg')
-from matplotlib import animation, pyplot, ticker
+from matplotlib import animation, gridspec, pyplot, ticker
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 SAMPLING_RATE = 16000
@@ -69,6 +71,67 @@ def full_plot(matrices, save_name):
                 pad_inches=0.5)
         except Exception:
             print "Error building image!: " + save_name
+
+    pyplot.close()
+
+
+def attention_plot(data, file_name, labels, dataset, labels_type):
+
+    dict_file = os.environ['FUEL_DATA_PATH']
+
+    if labels_type == 'unaligned_phonemes':
+        dict_name = 'phon2code.pkl'
+    elif labels_type == 'text':
+        dict_name = 'char2code.pkl'
+    else:
+        raise "Not implemented."
+
+    dict_file = os.path.join(dict_file, dataset, dict_name)
+
+    with open(dict_file, 'r') as f:
+        labels_dict = pickle.load(f)
+
+    labels_dict = {v: k for k, v in labels_dict.iteritems()}
+
+    labels = [labels_dict[x].decode('latin-1') for x in labels]
+
+    fs, wav_data = wavfile.read(file_name + '.wav')
+
+    f, axarr = pyplot.subplots(
+        3, 1,
+        gridspec_kw={
+            'height_ratios': [1, 1, 3],
+            'wspace': 0.001,
+            'hspace': 0.001},
+        figsize=(4, 8))
+
+    axarr[0].plot(wav_data)
+    axarr[0].axes.get_xaxis().set_visible(False)
+    axarr[0].axes.get_yaxis().set_visible(False)
+    axarr[0].set_xbound(lower=0, upper=len(wav_data))
+
+    pxx, freqs, bins, im = axarr[1].specgram(wav_data, Fs=fs, aspect='auto')
+    axarr[1].imshow(
+        numpy.ma.log(abs(pxx)),
+        aspect='auto', origin='lower', interpolation='nearest')
+
+    axarr[1].axes.get_xaxis().set_visible(False)
+    axarr[1].axes.get_yaxis().set_visible(False)
+
+    im = axarr[2].imshow(
+        data.T, aspect='auto', origin='lower', interpolation='nearest')
+
+    axarr[2].axes.get_xaxis().set_visible(False)
+    axarr[2].set_yticks(numpy.arange(0, len(data.T)))
+    axarr[2].set_yticklabels(labels, rotation=90)
+
+    try:
+        pyplot.savefig(
+            file_name + '.pdf',
+            bbox_inches='tight',
+            pad_inches=0.05)
+    except Exception:
+        print "Error building image!: " + save_name
 
     pyplot.close()
 
@@ -245,6 +308,9 @@ def sample_parse():
     parser.add_argument('--animation', type=bool,
                         default=False,
                         help='wether to do animation or no')
+    parser.add_argument('--debug_plot', type=bool,
+                        default=False,
+                        help='wether to do the full debugging plot')
     parser.add_argument('--sample_one_step', type=bool,
                         default=False,
                         help='wether to only sample one step or all')

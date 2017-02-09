@@ -14,7 +14,7 @@ from blocks.model import Model
 from datasets import parrot_stream
 from model import Parrot
 from utils import (
-    sample_parse, create_animation, numpy_one_hot)
+    attention_plot, sample_parse, create_animation, numpy_one_hot)
 from generate import generate_wav
 
 logging.basicConfig()
@@ -41,51 +41,21 @@ with open(os.path.join(
         params_mode + args.experiment_name + ".tar"), 'rb') as src:
     parameters = load_parameters(src)
 
-if args.new_sentences:
-    numpy.random.seed(1)
-    speaker_tr = numpy.random.random_integers(
-        1, saved_args.num_speakers - 1, (args.num_samples, 1))
-    speaker_tr = numpy.int8(speaker_tr)
+test_stream = parrot_stream(
+    args.dataset, saved_args.use_speaker, ('test',), args.num_samples,
+    args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type)
 
-    new_sentences_file = os.path.join(
-        data_dir, args.dataset,
-        'new_sentences.npy')
+data_tr = next(test_stream.get_epoch_iterator())
+data_tr = {
+    source: data for source, data in zip(test_stream.sources, data_tr)}
 
-    print 'Loading sentences from : ' + new_sentences_file
-
-    labels_tr = numpy.load(new_sentences_file)
-    lengths_tr = [len(x) for x in labels_tr]
-    max_length = max(lengths_tr)
-    features_mask_tr = numpy.zeros(
-        (args.num_samples, max_length), dtype='float32')
-    padded_labels_tr = numpy.zeros(
-        (args.num_samples, max_length, saved_args.input_dim), dtype='float32')
-
-    for i, sample in enumerate(labels_tr):
-        padded_labels_tr[i, :len(sample)] = sample
-        features_mask_tr[i, :len(sample)] = 1.
-
-    labels_tr = padded_labels_tr
-
-    features_mask_tr = features_mask_tr.swapaxes(0, 1)
-    labels_tr = labels_tr.swapaxes(0, 1)
-else:
-
-    test_stream = parrot_stream(
-        args.dataset, saved_args.use_speaker, ('test',), args.num_samples,
-        args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type)
-
-    data_tr = next(test_stream.get_epoch_iterator())
-    data_tr = {
-        source: data for source, data in zip(test_stream.sources, data_tr)}
-
-    print "Loaded sources from test_stream: ", data_tr.keys()
-    features_tr = data_tr.get('features', None)
-    features_mask_tr = data_tr.get('features_mask', None)
-    speaker_tr = data_tr.get('speaker_index', None)
-    labels_tr = data_tr.get('labels', None)
-    labels_mask_tr = data_tr.get('labels_mask', None)
-    start_flag_tr = data_tr.get('start_flag', None)
+print "Loaded sources from test_stream: ", data_tr.keys()
+features_tr = data_tr.get('features', None)
+features_mask_tr = data_tr.get('features_mask', None)
+speaker_tr = data_tr.get('speaker_index', None)
+labels_tr = data_tr.get('labels', None)
+labels_mask_tr = data_tr.get('labels_mask', None)
+start_flag_tr = data_tr.get('start_flag', None)
 
 if args.random_speaker:
     numpy.random.seed(1)
@@ -117,15 +87,12 @@ if not hasattr(saved_args, 'weak_feedback'):
     saved_args.weak_feedback = False
 if not hasattr(saved_args, 'full_feedback'):
     saved_args.full_feedback = False
-if not hasattr(saved_args, 'labels_type'):
-    saved_args.labels_type = 'full'
 
 parrot_args = {
     'input_dim': saved_args.input_dim,
     'output_dim': saved_args.output_dim,
     'rnn_h_dim': saved_args.rnn_h_dim,
     'readouts_dim': saved_args.readouts_dim,
-    'labels_type': saved_args.labels_type,
     'weak_feedback': saved_args.weak_feedback,
     'full_feedback': saved_args.full_feedback,
     'feedback_noise_level': None,
@@ -197,27 +164,24 @@ if args.process_originals:
             norm_info_file=norm_info_file,
             do_post_filtering=args.do_post_filtering)
 
+gen_phi = gen_phi.swapaxes(0, 1)
 
-if saved_args.labels_type in ['unaligned_phonemes', 'text']:
-    from utils import attention_plot
-    gen_phi = gen_phi.swapaxes(0, 1)
+for i in range(args.num_samples):
+    this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+    this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
+    this_labels = labels_tr[i, :this_labels_length]
+    this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
 
-    for i in range(args.num_samples):
-        this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
-        this_labels = labels_tr[i, :this_labels_length]
-        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
+    attention_plot(
+        this_phi,
+        os.path.join(
+            args.save_dir, 'samples',
+            args.samples_name + '_' + str(i)),
+        this_labels,
+        args.dataset,
+        saved_args.labels_type)
 
-        attention_plot(
-            this_phi,
-            os.path.join(
-                args.save_dir, 'samples',
-                args.samples_name + '_' + str(i)),
-            this_labels,
-            args.dataset,
-            saved_args.labels_type)
-
-if args.debug_plot and saved_args.labels_type in ['unaligned_phonemes', 'text']:
+if args.debug_plot:
     from utils import full_plot
     gen_k = gen_k.swapaxes(0, 1)
     gen_w = gen_w.swapaxes(0, 1)
@@ -241,45 +205,30 @@ if args.debug_plot and saved_args.labels_type in ['unaligned_phonemes', 'text']:
                 args.save_dir, 'samples',
                 args.samples_name + '_' + str(i) + '.png'))
 
-
-
 if args.animation:
-    if saved_args.labels_type in ['unaligned_phonemes', 'text']:
-        for i in range(args.num_samples):
-            this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-            this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
-            this_x = gen_x[i][:this_num_steps]
-            this_k = gen_k[i][:this_num_steps]
-            this_w = gen_w[i][:this_num_steps]
-            this_pi = gen_pi[i][:this_num_steps]
-            this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
-            this_pi_att = gen_pi_att[i][:this_num_steps]
-            create_animation(
-                [this_x, this_pi_att, this_k, this_w, this_phi],
-                args.samples_name + '_' + str(i) + '.wav',
-                args.samples_name + '_' + str(i),
-                os.path.join(args.save_dir, 'samples'))
+    for i in range(args.num_samples):
+        this_num_steps = int(features_mask_tr.sum(axis=0)[i])
+        this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
+        this_x = gen_x[i][:this_num_steps]
+        this_k = gen_k[i][:this_num_steps]
+        this_w = gen_w[i][:this_num_steps]
+        this_pi = gen_pi[i][:this_num_steps]
+        this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
+        this_pi_att = gen_pi_att[i][:this_num_steps]
+        create_animation(
+            [this_x, this_pi_att, this_k, this_w, this_phi],
+            args.samples_name + '_' + str(i) + '.wav',
+            args.samples_name + '_' + str(i),
+            os.path.join(args.save_dir, 'samples'))
 
-    elif saved_args.labels_type in ['phonemes']:
+    if args.process_originals:
         for i in range(args.num_samples):
             this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-            this_x = gen_x[i][:this_num_steps]
+            this_x = features_tr[:, i][:this_num_steps]
             this_phoneme = labels_tr[:, i][:this_num_steps]
             create_animation(
                 [this_x, numpy_one_hot(
                     this_phoneme, saved_args.num_characters)],
-                args.samples_name + '_' + str(i) + '.wav',
-                args.samples_name + '_' + str(i),
+                'original_' + args.samples_name + '_' + str(i) + '.wav',
+                'original_' + args.samples_name + '_' + str(i),
                 os.path.join(args.save_dir, 'samples'))
-
-        if args.process_originals:
-            for i in range(args.num_samples):
-                this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-                this_x = features_tr[:, i][:this_num_steps]
-                this_phoneme = labels_tr[:, i][:this_num_steps]
-                create_animation(
-                    [this_x, numpy_one_hot(
-                        this_phoneme, saved_args.num_characters)],
-                    'original_' + args.samples_name + '_' + str(i) + '.wav',
-                    'original_' + args.samples_name + '_' + str(i),
-                    os.path.join(args.save_dir, 'samples'))

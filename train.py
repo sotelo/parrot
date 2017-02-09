@@ -1,5 +1,4 @@
 import os
-from algorithms import Adasecant
 from blocks import initialization
 from blocks.algorithms import (
     Adam, CompositeRule, GradientDescent, StepClipping)
@@ -19,9 +18,6 @@ from model import Parrot
 from utils import train_parse
 
 args = train_parse()
-
-if args.algorithm == "adasecant":
-    args.lr_schedule = False
 
 exp_name = args.experiment_name
 save_dir = args.save_dir
@@ -63,7 +59,6 @@ parrot_args = {
     'output_dim': args.output_dim,
     'rnn_h_dim': args.rnn_h_dim,
     'readouts_dim': args.readouts_dim,
-    'labels_type': args.labels_type,
     'weak_feedback': args.weak_feedback,
     'full_feedback': args.full_feedback,
     'feedback_noise_level': args.feedback_noise_level,
@@ -90,46 +85,26 @@ cost, extra_updates, attention_vars = parrot.compute_cost(
     features, features_mask, labels, labels_mask,
     speaker, start_flag, args.batch_size)
 
-cost_name = 'nll'
+cost_name = args.which_cost
 cost.name = cost_name
 
 cg = ComputationGraph(cost)
 model = Model(cost)
 
-gradients = None
-if args.adaptive_noise:
-    from graph import apply_adaptive_noise
-
-    cost, cg, gradients, noise_brick = \
-        apply_adaptive_noise(
-            computation_graph=cg,
-            cost=cost,
-            variables=cg.parameters,
-            num_examples=900,
-            parameters=model.get_parameter_dict().values())
-
-    model = Model(cost)
-    cost_name = 'nll'
-    cost.name = cost_name
-
 parameters = cg.parameters
 
-if args.algorithm == "adam":
-    step_rule = CompositeRule(
-        [StepClipping(10. * args.grad_clip), Adam(args.learning_rate)])
-elif args.algorithm == "adasecant":
-    step_rule = Adasecant(grad_clip=args.grad_clip)
+step_rule = CompositeRule(
+    [StepClipping(10. * args.grad_clip), Adam(args.learning_rate)])
 
 algorithm = GradientDescent(
     cost=cost,
     parameters=parameters,
     step_rule=step_rule,
-    gradients=gradients,
     on_unused_sources='warn')
 algorithm.add_updates(extra_updates)
 
 monitoring_vars = [cost]
-plot_names = [['train_nll', 'valid_nll']]
+plot_names = [['train_' + cost_name, 'valid_' + cost_name]]
 
 if args.lr_schedule:
     lr = algorithm.step_rule.components[1].learning_rate
@@ -148,20 +123,9 @@ valid_monitor = DataStreamMonitoring(
     after_epoch=False,
     prefix="valid")
 
-# Multi GPU
-worker = None
-if args.platoon_port:
-    from blocks_extras.extensions.synchronization import (
-        Synchronize, SynchronizeWorker)
-    from platoon.param_sync import ASGD
-
-    sync_rule = ASGD()
-    worker = SynchronizeWorker(
-        sync_rule, control_port=args.platoon_port, socket_timeout=2000)
-
 extensions = []
 
-if args.load_experiment and (not worker or worker.is_main_worker):
+if args.load_experiment:
     extensions += [Load(os.path.join(
         save_dir, "pkl", "best_" + args.load_experiment + ".tar"))]
 
@@ -169,51 +133,44 @@ extensions += [
     Timing(every_n_batches=args.save_every),
     train_monitor]
 
-if not worker or worker.is_main_worker:
+extensions += [
+    valid_monitor,
+    TrackTheBest(
+        'valid_' + cost_name,
+        every_n_batches=args.save_every,
+        before_first_epoch=True),
+    Plot(
+        os.path.join(save_dir, "progress", exp_name + ".png"),
+        plot_names,
+        every_n_batches=args.save_every,
+        email=False),
+    Checkpoint(
+        os.path.join(save_dir, "pkl", "best_" + exp_name + ".tar"),
+        after_training=False,
+        save_separately=['log'],
+        use_cpickle=True,
+        save_main_loop=False,
+        before_first_epoch=True)
+    .add_condition(
+        ["after_batch", "before_training"],
+        predicate=OnLogRecord('valid_'+ cost_name + '_best_so_far')),
+    Checkpoint(
+        os.path.join(save_dir, "pkl", "last_" + exp_name + ".tar"),
+        after_training=True,
+        save_separately=['log'],
+        use_cpickle=True,
+        every_n_batches=args.save_every,
+        save_main_loop=False)]
+
+if args.lr_schedule:
     extensions += [
-        valid_monitor,
-        TrackTheBest(
-            'valid_nll',
-            every_n_batches=args.save_every,
-            before_first_epoch=True),
-        Plot(
-            os.path.join(save_dir, "progress", exp_name + ".png"),
-            plot_names,
-            every_n_batches=args.save_every,
-            email=False),
-        Checkpoint(
+        LearningRateSchedule(
+            lr, 'valid_' + cost_name,
             os.path.join(save_dir, "pkl", "best_" + exp_name + ".tar"),
-            after_training=False,
-            save_separately=['log'],
-            use_cpickle=True,
-            save_main_loop=False,
-            before_first_epoch=True)
-        .add_condition(
-            ["after_batch", "before_training"],
-            predicate=OnLogRecord('valid_nll_best_so_far')),
-        Checkpoint(
-            os.path.join(save_dir, "pkl", "last_" + exp_name + ".tar"),
-            after_training=True,
-            save_separately=['log'],
-            use_cpickle=True,
-            every_n_batches=args.save_every,
-            save_main_loop=False)]
+            patience=10,
+            num_cuts=5,
+            every_n_batches=args.save_every)]
 
-    if args.lr_schedule:
-        extensions += [
-            LearningRateSchedule(
-                lr, 'valid_nll',
-                os.path.join(save_dir, "pkl", "best_" + exp_name + ".tar"),
-                patience=10,
-                num_cuts=5,
-                every_n_batches=args.save_every)]
-
-if worker:
-    extensions += [
-        Synchronize(
-            worker,
-            after_batch=True,
-            before_epoch=True)]
 
 extensions += [
     Printing(

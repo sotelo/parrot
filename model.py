@@ -197,7 +197,6 @@ class Parrot(Initializable, Random):
             output_dim=63,  # Dimension of vocoder fram
             rnn_h_dim=1024,  # Size of rnn hidden state
             readouts_dim=1024,  # Size of readouts (summary of rnn)
-            labels_type='full_labels',  # full or phoneme labels
             weak_feedback=False,  # Feedback to the top rnn layer
             full_feedback=False,  # Feedback to all rnn layers
             feedback_noise_level=None,  # Amount of noise in feedback
@@ -221,14 +220,10 @@ class Parrot(Initializable, Random):
 
         super(Parrot, self).__init__(**kwargs)
 
-        if labels_type in ['unaligned_phonemes', 'text']:
-            labels_type = 'unaligned'
-
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.rnn_h_dim = rnn_h_dim
         self.readouts_dim = readouts_dim
-        self.labels_type = labels_type
         self.layer_norm = layer_norm
         self.which_cost = which_cost
         self.use_speaker = use_speaker
@@ -250,9 +245,6 @@ class Parrot(Initializable, Random):
 
         if self.encoder_type == 'bidirectional':
             self.encoded_input_dim = 2 * encoder_dim
-
-        assert labels_type in [
-            'full_labels', 'phonemes', 'unconditional', 'unaligned']
 
         if self.feedback_noise_level is not None:
             self.noise_level_var = tensor.scalar('feedback_noise_level')
@@ -328,55 +320,43 @@ class Parrot(Initializable, Random):
             self.h2_to_h3,
             self.readout_to_output]
 
-        if labels_type != 'unconditional':
-            self.inp_to_h1 = Fork(
-                output_names=['rnn1_inputs', 'rnn1_gates'],
-                input_dim=self.encoded_input_dim,
-                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-                name='inp_to_h1')
+        self.inp_to_h1 = Fork(
+            output_names=['rnn1_inputs', 'rnn1_gates'],
+            input_dim=self.encoded_input_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='inp_to_h1')
 
-            self.inp_to_h2 = Fork(
-                output_names=['rnn2_inputs', 'rnn2_gates'],
-                input_dim=self.encoded_input_dim,
-                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-                name='inp_to_h2')
+        self.inp_to_h2 = Fork(
+            output_names=['rnn2_inputs', 'rnn2_gates'],
+            input_dim=self.encoded_input_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='inp_to_h2')
 
-            self.inp_to_h3 = Fork(
-                output_names=['rnn3_inputs', 'rnn3_gates'],
-                input_dim=self.encoded_input_dim,
-                output_dims=[rnn_h_dim, 2 * rnn_h_dim],
-                name='inp_to_h3')
+        self.inp_to_h3 = Fork(
+            output_names=['rnn3_inputs', 'rnn3_gates'],
+            input_dim=self.encoded_input_dim,
+            output_dims=[rnn_h_dim, 2 * rnn_h_dim],
+            name='inp_to_h3')
 
-            self.children += [
-                self.inp_to_h1,
-                self.inp_to_h2,
-                self.inp_to_h3]
+        self.children += [
+            self.inp_to_h1,
+            self.inp_to_h2,
+            self.inp_to_h3]
 
-            if labels_type == 'phonemes':
-                self.embed_label = LookupTable(
-                    num_characters,
-                    self.encoded_input_dim,
-                    name='embed_label')
-                self.children += [
-                    self.embed_label]
+        self.h1_to_att = Fork(
+            output_names=['alpha', 'beta', 'kappa'],
+            input_dim=rnn_h_dim,
+            output_dims=[attention_size] * 3,
+            name='h1_to_att')
 
-            if labels_type == 'unaligned':
-                # assert num_characters == input_dim
+        self.att_to_readout = Linear(
+            input_dim=self.encoded_input_dim,
+            output_dim=readouts_dim,
+            name='att_to_readout')
 
-                self.h1_to_att = Fork(
-                    output_names=['alpha', 'beta', 'kappa'],
-                    input_dim=rnn_h_dim,
-                    output_dims=[attention_size] * 3,
-                    name='h1_to_att')
-
-                self.att_to_readout = Linear(
-                    input_dim=self.encoded_input_dim,
-                    output_dim=readouts_dim,
-                    name='att_to_readout')
-
-                self.children += [
-                    self.h1_to_att,
-                    self.att_to_readout]
+        self.children += [
+            self.h1_to_att,
+            self.att_to_readout]
 
         if use_speaker:
             self.num_speakers = num_speakers
@@ -464,20 +444,8 @@ class Parrot(Initializable, Random):
     def symbolic_input_variables(self):
         features = tensor.tensor3('features')
         features_mask = tensor.matrix('features_mask')
-
-        if self.labels_type == 'full_labels':
-            labels = tensor.tensor3('labels')
-        elif self.labels_type in ['phonemes', 'unaligned']:
-            labels = tensor.imatrix('labels')
-        elif self.labels_type == 'unconditional':
-            labels = None
-
-        if self.labels_type == 'unaligned':
-            labels_mask = tensor.matrix('labels_mask')
-        else:
-            # Maybe I should define labels_mask as features_mask
-            # labels_mask = None
-            labels_mask = features_mask
+        labels = tensor.imatrix('labels')
+        labels_mask = tensor.matrix('labels_mask')
 
         start_flag = tensor.scalar('start_flag')
 
@@ -503,12 +471,8 @@ class Parrot(Initializable, Random):
             (batch_size, self.attention_size), dtype=floatX)
         last_k = shared_floatx_zeros((batch_size, self.attention_size))
 
-        # Trainabla initial state for w. Why not for k?
-        if self.labels_type != 'unaligned':
-            initial_w = tensor.zeros(
-                (batch_size, self.encoded_input_dim), dtype=floatX)
-        else:
-            initial_w = tensor.repeat(self.initial_w[None, :], batch_size, 0)
+        # Trainable initial state for w. Why not for k?
+        initial_w = tensor.repeat(self.initial_w[None, :], batch_size, 0)
 
         last_w = shared_floatx_zeros((batch_size, self.encoded_input_dim))
 
@@ -523,9 +487,6 @@ class Parrot(Initializable, Random):
         if speaker is None:
             assert not self.use_speaker
 
-        if labels is None:
-            assert self.labels_type == 'unconditional'
-
         target_features = features[1:]
         mask = features_mask[1:]
 
@@ -537,31 +498,6 @@ class Parrot(Initializable, Random):
         gat_h1 = tensor.zeros(gat_shape, dtype=floatX)
         gat_h2 = tensor.zeros(gat_shape, dtype=floatX)
         gat_h3 = tensor.zeros(gat_shape, dtype=floatX)
-
-        if self.labels_type not in ['unconditional', 'unaligned']:
-            labels = labels[1:]
-
-            if self.labels_type == 'phonemes':
-                labels = self.embed_label.apply(labels)
-
-            inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
-            inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
-            inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
-
-            to_normalize = [
-                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
-                inp_cell_h3, inp_gat_h3]
-
-            inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
-                inp_cell_h3, inp_gat_h3 = \
-                [_apply_norm(x, self.layer_norm) for x in to_normalize]
-
-            cell_h1 += inp_cell_h1
-            cell_h2 += inp_cell_h2
-            cell_h3 += inp_cell_h3
-            gat_h1 += inp_gat_h1
-            gat_h2 += inp_gat_h2
-            gat_h3 += inp_gat_h3
 
         if self.weak_feedback:
             input_features = features[:-1]
@@ -637,72 +573,59 @@ class Parrot(Initializable, Random):
         input_k = tensor.switch(
             start_flag, initial_k, last_k)
 
-        if self.labels_type == 'unaligned':
-            # TODO: include context_oh as context in the step function.
-            if self.encoder_type is None:
-                context_oh = one_hot(labels, self.num_characters) * \
-                    tensor.shape_padright(labels_mask)
-            elif self.encoder_type == 'bidirectional':
-                context_oh = self.encoder.apply(labels) * \
-                    tensor.shape_padright(labels_mask)
+        context_oh = self.encoder.apply(labels) * \
+            tensor.shape_padright(labels_mask)
 
-            u = tensor.shape_padleft(
-                tensor.arange(labels.shape[1], dtype=floatX), 2)
+        u = tensor.shape_padleft(
+            tensor.arange(labels.shape[1], dtype=floatX), 2)
 
         def step(
                 inp_h1_t, gat_h1_t, inp_h2_t, gat_h2_t, inp_h3_t, gat_h3_t,
                 h1_tm1, h2_tm1, h3_tm1, k_tm1, w_tm1, context_oh):
 
-            if self.labels_type == 'unaligned':
-                attinp_h1, attgat_h1 = self.inp_to_h1.apply(w_tm1)
-                inp_h1_t += attinp_h1
-                gat_h1_t += attgat_h1
+            attinp_h1, attgat_h1 = self.inp_to_h1.apply(w_tm1)
+            inp_h1_t += attinp_h1
+            gat_h1_t += attgat_h1
 
             h1_t = self.rnn1.apply(
                 inp_h1_t,
                 gat_h1_t,
                 h1_tm1, iterate=False)
 
-            if self.labels_type == 'unaligned':
-                a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
+            a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
 
-                if self.attention_type == "softmax":
-                    a_t = tensor.nnet.softmax(a_t) + self.epsilon
-                else:
-                    a_t = tensor.exp(a_t) + self.epsilon
-
-                b_t = tensor.exp(b_t) + self.epsilon
-                k_t = k_tm1 + self.attention_alignment * tensor.exp(k_t)
-
-                a_t_ = a_t
-                a_t = tensor.shape_padright(a_t)
-                b_t = tensor.shape_padright(b_t)
-                k_t_ = tensor.shape_padright(k_t)
-
-                # batch size X att size X len context
-                if self.attention_type == "softmax":
-                    # numpy.sqrt(1/(2*numpy.pi)) is the weird number
-                    phi_t = 0.3989422917366028 * tensor.sum(
-                        a_t * tensor.sqrt(b_t) *
-                        tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
-                else:
-                    phi_t = tensor.sum(
-                        a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
-
-                # batch size X len context X num letters
-                w_t = (tensor.shape_padright(phi_t) * context_oh).sum(axis=1)
-
-                attinp_h2, attgat_h2 = self.inp_to_h2.apply(w_t)
-                attinp_h3, attgat_h3 = self.inp_to_h3.apply(w_t)
-                inp_h2_t += attinp_h2
-                gat_h2_t += attgat_h2
-                inp_h3_t += attinp_h3
-                gat_h3_t += attgat_h3
+            if self.attention_type == "softmax":
+                a_t = tensor.nnet.softmax(a_t) + self.epsilon
             else:
-                k_t = k_tm1
-                w_t = w_tm1
-                a_t_ = k_tm1
-                phi_t = k_tm1
+                a_t = tensor.exp(a_t) + self.epsilon
+
+            b_t = tensor.exp(b_t) + self.epsilon
+            k_t = k_tm1 + self.attention_alignment * tensor.exp(k_t)
+
+            a_t_ = a_t
+            a_t = tensor.shape_padright(a_t)
+            b_t = tensor.shape_padright(b_t)
+            k_t_ = tensor.shape_padright(k_t)
+
+            # batch size X att size X len context
+            if self.attention_type == "softmax":
+                # numpy.sqrt(1/(2*numpy.pi)) is the weird number
+                phi_t = 0.3989422917366028 * tensor.sum(
+                    a_t * tensor.sqrt(b_t) *
+                    tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
+            else:
+                phi_t = tensor.sum(
+                    a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+
+            # batch size X len context X num letters
+            w_t = (tensor.shape_padright(phi_t) * context_oh).sum(axis=1)
+
+            attinp_h2, attgat_h2 = self.inp_to_h2.apply(w_t)
+            attinp_h3, attgat_h3 = self.inp_to_h3.apply(w_t)
+            inp_h2_t += attinp_h2
+            gat_h2_t += attgat_h2
+            inp_h3_t += attinp_h3
+            gat_h3_t += attgat_h3
 
             h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
             h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
@@ -758,8 +681,7 @@ class Parrot(Initializable, Random):
         if self.use_speaker:
             readouts += self.speaker_to_readout.apply(emb_speaker)
 
-        if self.labels_type == 'unaligned':
-            readouts += self.att_to_readout.apply(w)
+        readouts += self.att_to_readout.apply(w)
 
         predicted = self.readout_to_output.apply(readouts)
 
@@ -796,10 +718,8 @@ class Parrot(Initializable, Random):
         updates.append((last_h1, h1[-1]))
         updates.append((last_h2, h2[-1]))
         updates.append((last_h3, h3[-1]))
-
-        if self.labels_type == 'unaligned':
-            updates.append((last_k, k[-1]))
-            updates.append((last_w, w[-1]))
+        updates.append((last_k, k[-1]))
+        updates.append((last_w, w[-1]))
 
         attention_vars = [next_x, k, w, coeff, phi, pi_att]
 
@@ -824,29 +744,6 @@ class Parrot(Initializable, Random):
         gat_h1 = tensor.zeros(gat_shape, dtype=floatX)
         gat_h2 = tensor.zeros(gat_shape, dtype=floatX)
         gat_h3 = tensor.zeros(gat_shape, dtype=floatX)
-
-        if self.labels_type not in ['unconditional', 'unaligned']:
-            if self.labels_type == 'phonemes':
-                labels = self.embed_label.apply(labels)
-
-            inp_cell_h1, inp_gat_h1 = self.inp_to_h1.apply(labels)
-            inp_cell_h2, inp_gat_h2 = self.inp_to_h2.apply(labels)
-            inp_cell_h3, inp_gat_h3 = self.inp_to_h3.apply(labels)
-
-            to_normalize = [
-                inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2,
-                inp_cell_h3, inp_gat_h3]
-
-            inp_cell_h1, inp_gat_h1, inp_cell_h2, inp_gat_h2, \
-                inp_cell_h3, inp_gat_h3 = \
-                [_apply_norm(x, self.layer_norm) for x in to_normalize]
-
-            cell_h1 += inp_cell_h1
-            cell_h2 += inp_cell_h2
-            cell_h3 += inp_cell_h3
-            gat_h1 += inp_gat_h1
-            gat_h2 += inp_gat_h2
-            gat_h3 += inp_gat_h3
 
         if self.use_speaker:
             speaker = speaker[:, 0]
@@ -878,19 +775,11 @@ class Parrot(Initializable, Random):
             gat_h2 += spk_gat_h2
             gat_h3 += spk_gat_h3
 
-        if self.labels_type == 'unaligned':
-            # TODO: include context_oh as context in the step function.
-            # batch_size * seq_length * num_characters
+        context_oh = self.encoder.apply(labels) * \
+            tensor.shape_padright(labels_mask)
 
-            if self.encoder_type is None:
-                context_oh = one_hot(labels, self.num_characters) * \
-                    tensor.shape_padright(labels_mask)
-            elif self.encoder_type == 'bidirectional':
-                context_oh = self.encoder.apply(labels) * \
-                    tensor.shape_padright(labels_mask)
-
-            u = tensor.shape_padleft(
-                tensor.arange(labels.shape[1], dtype=floatX), 2)
+        u = tensor.shape_padleft(
+            tensor.arange(labels.shape[1], dtype=floatX), 2)
 
         def sample_step(
                 inp_cell_h1_t, inp_gat_h1_t, inp_cell_h2_t, inp_gat_h2_t,
@@ -905,10 +794,9 @@ class Parrot(Initializable, Random):
             gat_h2_t = inp_gat_h2_t
             gat_h3_t = inp_gat_h3_t
 
-            if self.labels_type == 'unaligned':
-                attinp_h1, attgat_h1 = self.inp_to_h1.apply(w_tm1)
-                cell_h1_t += attinp_h1
-                gat_h1_t += attgat_h1
+            attinp_h1, attgat_h1 = self.inp_to_h1.apply(w_tm1)
+            cell_h1_t += attinp_h1
+            gat_h1_t += attgat_h1
 
             if self.weak_feedback:
                 out_cell_h1_t, out_gat_h1_t = self.out_to_h1.apply(x_tm1)
@@ -942,47 +830,41 @@ class Parrot(Initializable, Random):
                 gat_h1_t,
                 h1_tm1, iterate=False)
 
-            if self.labels_type == 'unaligned':
-                a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
+            a_t, b_t, k_t = self.h1_to_att.apply(h1_t)
 
-                if self.attention_type == "softmax":
-                    a_t = tensor.nnet.softmax(a_t) + self.epsilon
-                else:
-                    a_t = tensor.exp(a_t) + self.epsilon
-
-                b_t = tensor.exp(b_t) * self.sharpening_coeff + self.epsilon
-                k_t = k_tm1 + self.attention_alignment * \
-                    tensor.exp(k_t) / self.timing_coeff
-
-                a_t_ = a_t
-                a_t = tensor.shape_padright(a_t)
-                b_t = tensor.shape_padright(b_t)
-                k_t_ = tensor.shape_padright(k_t)
-
-                # batch size X att size X len context
-                if self.attention_type == "softmax":
-                    # numpy.sqrt(1/(2*numpy.pi)) is the weird number
-                    phi_t = 0.3989422917366028 * tensor.sum(
-                        a_t * tensor.sqrt(b_t) *
-                        tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
-                else:
-                    phi_t = tensor.sum(
-                        a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
-
-                # batch size X len context X num letters
-                w_t = (tensor.shape_padright(phi_t) * context_oh).sum(axis=1)
-
-                attinp_h2, attgat_h2 = self.inp_to_h2.apply(w_t)
-                attinp_h3, attgat_h3 = self.inp_to_h3.apply(w_t)
-                cell_h2_t += attinp_h2
-                gat_h2_t += attgat_h2
-                cell_h3_t += attinp_h3
-                gat_h3_t += attgat_h3
+            if self.attention_type == "softmax":
+                a_t = tensor.nnet.softmax(a_t) + self.epsilon
             else:
-                k_t = k_tm1
-                w_t = w_tm1
-                phi_t = k_tm1
-                a_t_ = k_tm1
+                a_t = tensor.exp(a_t) + self.epsilon
+
+            b_t = tensor.exp(b_t) * self.sharpening_coeff + self.epsilon
+            k_t = k_tm1 + self.attention_alignment * \
+                tensor.exp(k_t) / self.timing_coeff
+
+            a_t_ = a_t
+            a_t = tensor.shape_padright(a_t)
+            b_t = tensor.shape_padright(b_t)
+            k_t_ = tensor.shape_padright(k_t)
+
+            # batch size X att size X len context
+            if self.attention_type == "softmax":
+                # numpy.sqrt(1/(2*numpy.pi)) is the weird number
+                phi_t = 0.3989422917366028 * tensor.sum(
+                    a_t * tensor.sqrt(b_t) *
+                    tensor.exp(-0.5 * b_t * (k_t_ - u)**2), axis=1)
+            else:
+                phi_t = tensor.sum(
+                    a_t * tensor.exp(-b_t * (k_t_ - u)**2), axis=1)
+
+            # batch size X len context X num letters
+            w_t = (tensor.shape_padright(phi_t) * context_oh).sum(axis=1)
+
+            attinp_h2, attgat_h2 = self.inp_to_h2.apply(w_t)
+            attinp_h3, attgat_h3 = self.inp_to_h3.apply(w_t)
+            cell_h2_t += attinp_h2
+            gat_h2_t += attgat_h2
+            cell_h3_t += attinp_h3
+            gat_h3_t += attgat_h3
 
             h1inp_h2, h1gat_h2 = self.h1_to_h2.apply(h1_t)
             h1inp_h3, h1gat_h3 = self.h1_to_h3.apply(h1_t)
@@ -1020,8 +902,7 @@ class Parrot(Initializable, Random):
 
             readout_t = h1_out_t + h2_out_t + h3_out_t
 
-            if self.labels_type == 'unaligned':
-                readout_t += self.att_to_readout.apply(w_t)
+            readout_t += self.att_to_readout.apply(w_t)
 
             if self.use_speaker:
                 readout_t += spk_readout
@@ -1091,16 +972,8 @@ class Parrot(Initializable, Random):
                 labels, labels_mask, speaker,
                 num_samples, features_mask.shape[0])
 
-        theano_inputs = [features_mask]
-        numpy_inputs = (features_mask_tr,)
-
-        if self.labels_type != 'unconditional':
-            theano_inputs += [labels]
-            numpy_inputs += (labels_tr,)
-
-        if self.labels_type == 'unaligned':
-            theano_inputs += [labels_mask]
-            numpy_inputs += (labels_mask_tr,)
+        theano_inputs = [features_mask, labels, labels_mask]
+        numpy_inputs = (features_mask_tr, labels_tr, labels_mask_tr)
 
         if self.use_speaker:
             theano_inputs += [speaker]

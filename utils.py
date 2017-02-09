@@ -176,7 +176,7 @@ def train_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--experiment_name', type=str, default='baseline',
                         help='name of the experiment.')
-    parser.add_argument('--encoder_type', type=str, default=None,
+    parser.add_argument('--encoder_type', type=str, default='bidirectional',
                         help='which encode to use none or bidirectional')
     parser.add_argument('--encoder_dim', type=int, default=128,
                         help='size of hidden state of the encoder')
@@ -214,21 +214,12 @@ def train_parse():
                         help='save frequency')
     parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='learning rate')
-    parser.add_argument('--platoon_port', type=int,
-                        default=None,
-                        help='port where platoon server is running')
-    parser.add_argument('--algorithm', type=str,
-                        default='adam',
-                        help='adam or adasecant')
     parser.add_argument('--grad_clip', type=float,
                         default=0.9,
                         help='how much to clip the gradients. for adam is 10x')
     parser.add_argument('--lr_schedule', type=bool,
                         default=False,
                         help='whether to use the learning rate schedule')
-    parser.add_argument('--adaptive_noise', type=bool,
-                        default=False,
-                        help='whether to use adaptive noise')
     parser.add_argument('--load_experiment', type=str,
                         default=None,
                         help='name of the experiment that will be loaded')
@@ -253,9 +244,6 @@ def train_parse():
     args = parser.parse_args()
     if args.dataset not in args.save_dir:
         args.save_dir = os.path.join(args.save_dir, args.dataset)
-
-    if args.adaptive_noise:
-        args.batch_size = 1
 
     return args
 
@@ -313,7 +301,7 @@ def sample_parse():
                         help='wether to do the full debugging plot')
     parser.add_argument('--sample_one_step', type=bool,
                         default=False,
-                        help='wether to only sample one step or all')
+                        help='whether to only sample one step or all')
     parser.add_argument('--use_last', type=bool,
                         default=False,
                         help='wether to use the best parameters or last')

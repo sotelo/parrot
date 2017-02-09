@@ -188,7 +188,7 @@ class VoiceData(H5PYDataset):
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full_labels', check_ratio=True):
+        labels_type='full_labels', check_ratio=False):
 
     assert labels_type in [
         'full_labels', 'phonemes', 'unconditional',
@@ -267,7 +267,7 @@ def parrot_stream(
 if __name__ == "__main__":
     data_stream = parrot_stream(
         'dimex', labels_type='text', seq_size=10000,
-        batch_size=4000, sorting_mult=1, check_ratio=True)
+        batch_size=4000, sorting_mult=1, check_ratio=False)
 
     # print next(data_stream.get_epoch_iterator())[-1]
 

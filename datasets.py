@@ -22,6 +22,10 @@ def _transpose(data):
     return data.swapaxes(0, 1)
 
 
+def _chunk(data, frame_size=80, axis=1):
+    return numpy.stack(numpy.split(data, data.shape[axis]/frame_size, axis))
+
+
 def _check_batch_size(data, batch_size):
     return len(data[0]) == batch_size
 
@@ -188,7 +192,7 @@ class VoiceData(H5PYDataset):
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full_labels', check_ratio=False):
+        labels_type='full_labels', check_ratio=False, raw_data=True):
 
     assert labels_type in [
         'full_labels', 'phonemes', 'unconditional',
@@ -217,6 +221,12 @@ def parrot_stream(
 
     segment_sources = ('features', 'features_mask')
     all_sources = segment_sources
+
+    if raw_data:
+        raw_sources = ('raw_audio', )
+        all_sources += raw_sources
+    else:
+        raw_sources = ()
 
     if labels_type != 'unconditional':
         all_sources += ('labels', )
@@ -250,13 +260,18 @@ def parrot_stream(
     data_stream = SourceMapping(
         data_stream, _transpose, which_sources=segment_sources)
 
+    # The conditional is not necessary, but I'm still adding it for clarity.
+    if raw_data:
+        data_stream = SourceMapping(
+            data_stream, _chunk, which_sources=raw_sources)
+
     data_stream = SegmentSequence(
         data_stream,
         seq_size=seq_size + 1,
         share_value=1,
         return_last=False,
         add_flag=True,
-        which_sources=segment_sources)
+        which_sources=segment_sources + raw_sources)
 
     if noise_level is not None:
         data_stream = AddConstantSource(
@@ -266,15 +281,25 @@ def parrot_stream(
 
 if __name__ == "__main__":
     data_stream = parrot_stream(
-        'dimex', labels_type='text', seq_size=10000,
-        batch_size=4000, sorting_mult=1, check_ratio=False)
+        'dimex', labels_type='text', seq_size=10,
+        batch_size=10, sorting_mult=1, check_ratio=False, raw_data=True)
+    print data_stream.sources
+    data_tr = next(data_stream.get_epoch_iterator())
+
+    for idx, source in enumerate(data_stream.sources):
+        if source not in ['start_flag', 'feedback_noise_level']:
+            print source, "shape: ", data_tr[idx].shape, \
+                source, "dtype: ", data_tr[idx].dtype
+        else:
+            print source, ": ", data_tr[idx]
+
 
     # print next(data_stream.get_epoch_iterator())[-1]
-
-    # For Arctic, the ratio is 18 steps of features per letter.
-    data_tr = next(data_stream.get_epoch_iterator())
-    ratios = (data_tr[1].sum(0) / data_tr[3].sum(1))
-    print numpy.percentile(ratios, [0, 10, 25, 50, 75, 90, 99, 100])
+    # import ipdb; ipdb.set_trace()
+    # # For Arctic, the ratio is 18 steps of features per letter.
+    # data_tr = next(data_stream.get_epoch_iterator())
+    # ratios = (data_tr[1].sum(0) / data_tr[3].sum(1))
+    # print numpy.percentile(ratios, [0, 10, 25, 50, 75, 90, 99, 100])
 
     # Arctic
     # phonemes: array([ 12.84, 14.75, 15.56, 16.82, 18.16, 19.89, 48.8])

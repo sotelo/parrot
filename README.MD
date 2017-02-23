@@ -9,3 +9,5 @@ The website is [here](http://www.josesotelo.com/speechsynthesis).
 NOTE: The code is currently being refactored/cleaned/documented. We wanted to make it available as soon as possible but we know well that the current version is not ready for replication. Therefore, if you're interested in this, please come back later. Alternatively, you can send me an email and I will let you know when it's ready.
 
 NOTE(2): The code for the neural vocoder is based on [sampleRNN](https://github.com/soroushmehr/sampleRNN_ICLR2017).
+
+Update: SampleRNN modules added

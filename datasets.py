@@ -11,6 +11,8 @@ from fuel.streams import DataStream
 
 from fuel.datasets import H5PYDataset
 
+from quantize import __batch_quantize
+
 import numpy
 
 
@@ -189,10 +191,22 @@ class VoiceData(H5PYDataset):
         return os.path.join(config.data_path[0], self.voice, self.filename)
 
 
+def get_raw_transformer(q_type, q_level):
+    def transformer(batch):
+        # import ipdb; ipdb.set_trace()
+        batch_shape = batch.shape
+        batch = batch.transpose(1, 0, 2).reshape((batch_shape[1], -1))
+        batch = __batch_quantize(batch, q_level, q_type)
+        batch = batch.reshape((batch_shape[1], -1, 80))
+        batch = batch.transpose(1,0,2)
+        return batch
+    return transformer
+
+
 def parrot_stream(
         voice, use_speaker=False, which_sets=('train',), batch_size=32,
         seq_size=50, num_examples=None, sorting_mult=4, noise_level=None,
-        labels_type='full_labels', check_ratio=False, raw_data=True):
+        labels_type='full_labels', check_ratio=False, raw_data=True, q_type='mu-law', q_level=256):
 
     assert labels_type in [
         'full_labels', 'phonemes', 'unconditional',
@@ -264,6 +278,10 @@ def parrot_stream(
     if raw_data:
         data_stream = SourceMapping(
             data_stream, _chunk, which_sources=raw_sources)
+
+        raw_transformer = get_raw_transformer(q_type, q_level)
+        data_stream = SourceMapping(
+            data_stream, raw_transformer, which_sources=raw_sources)
 
     data_stream = SegmentSequence(
         data_stream,

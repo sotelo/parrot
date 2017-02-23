@@ -33,7 +33,7 @@ b_init = initialization.Constant(0.)
 train_stream = parrot_stream(
     args.dataset, args.use_speaker, ('train',), args.batch_size,
     noise_level=args.feedback_noise_level, labels_type=args.labels_type,
-    seq_size=args.seq_size)
+    seq_size=args.seq_size, raw_data=args.raw_output)
 
 if args.feedback_noise_level is None:
     val_noise_level = None
@@ -43,7 +43,7 @@ else:
 valid_stream = parrot_stream(
     args.dataset, args.use_speaker, ('valid',), args.batch_size,
     noise_level=val_noise_level, labels_type=args.labels_type,
-    seq_size=10000)
+    seq_size=args.seq_size, raw_data=args.raw_output)
 
 example_batch = next(train_stream.get_epoch_iterator())
 
@@ -73,20 +73,24 @@ parrot_args = {
     'encoder_type': args.encoder_type,
     'weights_init': w_init,
     'biases_init': b_init,
+    'raw_output': args.raw_output,
     'name': 'parrot'}
 
 parrot = Parrot(**parrot_args)
 parrot.initialize()
 
-features, features_mask, labels, labels_mask, speaker, start_flag = \
+features, features_mask, labels, labels_mask, speaker, start_flag, raw_sequence = \
     parrot.symbolic_input_variables()
 
-cost, extra_updates, attention_vars = parrot.compute_cost(
+cost, extra_updates, attention_vars, cost_raw = parrot.compute_cost(
     features, features_mask, labels, labels_mask,
-    speaker, start_flag, args.batch_size)
+    speaker, start_flag, args.batch_size, raw_audio=raw_sequence)
 
 cost_name = args.which_cost
 cost.name = cost_name
+
+if parrot.raw_output:
+    cost_raw.name = "sampleRNN_cost"
 
 cg = ComputationGraph(cost)
 model = Model(cost)
@@ -110,6 +114,12 @@ if args.lr_schedule:
     lr = algorithm.step_rule.components[1].learning_rate
     monitoring_vars.append(lr)
     plot_names += [['valid_learning_rate']]
+
+if parrot.raw_output:
+    monitoring_vars.append(cost_raw)
+    plot_names.append(['train_sampleRNN_cost', 'valid_sampleRNN_cost'])
+
+
 
 train_monitor = TrainingDataMonitoring(
     variables=monitoring_vars,

@@ -57,6 +57,7 @@ speaker_tr = data_tr.get('speaker_index', None)
 labels_tr = data_tr.get('labels', None)
 labels_mask_tr = data_tr.get('labels_mask', None)
 start_flag_tr = data_tr.get('start_flag', None)
+raw_audio_tr = data_tr.get('raw_audio', None)
 
 if args.random_speaker:
     numpy.random.seed(1)
@@ -88,6 +89,8 @@ if args.mix and saved_args.use_speaker:
 #     saved_args.weak_feedback = False
 # if not hasattr(saved_args, 'full_feedback'):
 #     saved_args.full_feedback = False
+if not hasattr(saved_args, 'raw_output'):
+    saved_args.raw_output = False
 
 parrot_args = {
     'input_dim': saved_args.input_dim,
@@ -109,16 +112,17 @@ parrot_args = {
     'sharpening_coeff': args.sharpening_coeff,
     'timing_coeff': args.timing_coeff,
     'encoder_type': saved_args.encoder_type,
+    'raw_output': saved_args.raw_output,
     'name': 'parrot'}
 
 parrot = Parrot(**parrot_args)
 
-features, features_mask, labels, labels_mask, speaker, start_flag = \
+features, features_mask, labels, labels_mask, speaker, start_flag, raw_audio = \
     parrot.symbolic_input_variables()
 
-cost, extra_updates, attention_vars = parrot.compute_cost(
+cost, extra_updates, attention_vars, cost_raw = parrot.compute_cost(
     features, features_mask, labels, labels_mask,
-    speaker, start_flag, args.num_samples)
+    speaker, start_flag, args.num_samples, raw_audio=raw_audio)
 
 model = Model(cost)
 model.set_parameter_values(parameters)
@@ -157,6 +161,17 @@ for idx in range(args.num_samples):
 
     features_lengths.append(this_features_length)
     labels_lengths.append(this_labels_length)
+
+if saved_args.raw_output:
+    print "Sampling and saving raw audio..."
+
+    to_save_path = os.path.join(args.save_dir, 'samples', 'new_raw')
+    if not os.path.exists(to_save_path):
+        os.makedirs(to_save_path)
+
+    parrot.sampleRnn.sample_raw(gen_x.swapaxes(0, 1).copy(), features_lengths, args.samples_name, to_save_path)
+    print "Successfully sampled raw audio..."
+
 
 norm_info_file = os.path.join(
     data_dir, args.dataset,

@@ -225,6 +225,9 @@ def train_parse():
     parser.add_argument('--load_experiment', type=str,
                         default=None,
                         help='name of the experiment that will be loaded')
+    parser.add_argument('--raw_output', type=bool,
+                        default=False,
+                        help='Whether to use raw output')
     parser.add_argument('--time_limit', type=float, default=None,
                         help='time in hours that the model will run')
     parser.add_argument('--use_speaker', type=bool,

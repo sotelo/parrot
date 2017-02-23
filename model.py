@@ -962,7 +962,7 @@ class Parrot(Initializable, Random):
 
     def sample_model(
             self, labels_tr, labels_mask_tr, features_mask_tr,
-            speaker_tr, num_samples):
+            speaker_tr, num_samples, num_steps):
 
         features, features_mask, labels, labels_mask, speaker, start_flag = \
             self.symbolic_input_variables()
@@ -970,10 +970,10 @@ class Parrot(Initializable, Random):
         sample_x, k, w, pi, phi, pi_att, updates = \
             self.sample_model_fun(
                 labels, labels_mask, speaker,
-                num_samples, features_mask.shape[0])
+                num_samples, num_steps)
 
-        theano_inputs = [features_mask, labels, labels_mask]
-        numpy_inputs = (features_mask_tr, labels_tr, labels_mask_tr)
+        theano_inputs = [labels, labels_mask]
+        numpy_inputs = (labels_tr, labels_mask_tr)
 
         if self.use_speaker:
             theano_inputs += [speaker]

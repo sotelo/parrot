@@ -43,7 +43,8 @@ with open(os.path.join(
 
 test_stream = parrot_stream(
     args.dataset, saved_args.use_speaker, ('test',), args.num_samples,
-    args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type)
+    args.num_steps, sorting_mult=1, labels_type=saved_args.labels_type,
+    raw_data=args.plot_raw)
 
 data_tr = next(test_stream.get_epoch_iterator())
 data_tr = {
@@ -83,10 +84,10 @@ if args.mix and saved_args.use_speaker:
         (1 - args.mix) * parameters['/parrot/lookuptable.W'][11]
 
 # Set default values for old config files.
-if not hasattr(saved_args, 'weak_feedback'):
-    saved_args.weak_feedback = False
-if not hasattr(saved_args, 'full_feedback'):
-    saved_args.full_feedback = False
+# if not hasattr(saved_args, 'weak_feedback'):
+#     saved_args.weak_feedback = False
+# if not hasattr(saved_args, 'full_feedback'):
+#     saved_args.full_feedback = False
 
 parrot_args = {
     'input_dim': saved_args.input_dim,
@@ -130,26 +131,60 @@ if args.sample_one_step:
 else:
     gen_x, gen_k, gen_w, gen_pi, gen_phi, gen_pi_att = parrot.sample_model(
         labels_tr, labels_mask_tr, features_mask_tr,
-        speaker_tr, args.num_samples)
+        speaker_tr, args.num_samples, args.num_steps)
 
 print "Successfully sampled the parrot."
 
 gen_x = gen_x.swapaxes(0, 1)
+gen_phi = gen_phi.swapaxes(0, 1)
+
+features_lengths = []
+labels_lengths = []
+for idx in range(args.num_samples):
+    # Heuristic for deciding when to end the sampling.
+    this_phi = gen_phi[idx]
+    this_labels_length = int(labels_mask_tr[idx].sum())
+
+    try:
+        this_features_length = numpy.where((
+            this_phi[:, this_labels_length, numpy.newaxis] >
+            this_phi[:, :this_labels_length-1]).all(axis=1))[0][0]
+        this_features_length = numpy.minimum(
+            args.num_steps, this_features_length + 40)  # Small extra time.
+    except:
+        print "Its better to increase the number of samples."
+        this_features_length = args.num_steps
+
+    features_lengths.append(this_features_length)
+    labels_lengths.append(this_labels_length)
 
 norm_info_file = os.path.join(
     data_dir, args.dataset,
     'norm_info_mgc_lf0_vuv_bap_63_MVN.dat')
 
-for i, this_sample in enumerate(gen_x):
-    this_sample = this_sample[:int(features_mask_tr.sum(axis=0)[i])]
+for idx, this_sample in enumerate(gen_x):
+    this_sample = this_sample[:features_lengths[idx]]
     generate_wav(
         this_sample,
         os.path.join(args.save_dir, 'samples'),
-        args.samples_name + '_' + str(i),
+        args.samples_name + '_' + str(idx),
         sptk_dir=args.sptk_dir,
         world_dir=args.world_dir,
         norm_info_file=norm_info_file,
         do_post_filtering=args.do_post_filtering)
+
+if args.plot_raw:
+    from scipy.io import wavfile
+    raw_audio = data_tr['raw_audio'].swapaxes(0, 1)
+
+    for idx in range(args.num_samples):
+        this_raw = numpy.concatenate(
+            raw_audio[idx])[:80*int(features_mask_tr.sum(axis=0)[idx])]
+        wavfile.write(
+            os.path.join(
+                args.save_dir, 'samples',
+                'raw_' + args.samples_name + '_' + str(idx) + '.wav'),
+            16000, this_raw)
 
 if args.process_originals:
     assert not args.new_sentences
@@ -164,22 +199,27 @@ if args.process_originals:
             norm_info_file=norm_info_file,
             do_post_filtering=args.do_post_filtering)
 
-gen_phi = gen_phi.swapaxes(0, 1)
+all_text = []
+for idx in range(args.num_samples):
+    this_labels = labels_tr[idx, :labels_lengths[idx]]
+    this_phi = gen_phi[idx][:features_lengths[idx], :labels_lengths[idx]]
 
-for i in range(args.num_samples):
-    this_num_steps = int(features_mask_tr.sum(axis=0)[i])
-    this_labels_length = int(labels_mask_tr.sum(axis=1)[i])
-    this_labels = labels_tr[i, :this_labels_length]
-    this_phi = gen_phi[i][:this_num_steps, :this_labels_length]
-
-    attention_plot(
+    this_text = attention_plot(
         this_phi,
         os.path.join(
             args.save_dir, 'samples',
-            args.samples_name + '_' + str(i)),
+            args.samples_name + '_' + str(idx)),
         this_labels,
         args.dataset,
         saved_args.labels_type)
+    this_text = ''.join(this_text)
+    all_text.append(this_text + '\n')
+
+with open(
+    os.path.join(
+        args.save_dir, 'samples', args.samples_name + '.txt'),
+        'w') as text_file:
+    text_file.write(''.join(all_text).encode('utf8'))
 
 if args.debug_plot:
     from utils import full_plot

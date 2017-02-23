@@ -131,9 +131,11 @@ def attention_plot(data, file_name, labels, dataset, labels_type):
             bbox_inches='tight',
             pad_inches=0.05)
     except Exception:
-        print "Error building image!: " + save_name
+        print "Error building image!: " + file_name
 
     pyplot.close()
+
+    return labels
 
 
 def create_animation(matrices, audio_file, filename, save_dir):
@@ -295,7 +297,7 @@ def sample_parse():
                         help='do post filtering process')
     parser.add_argument('--animation', type=bool,
                         default=False,
-                        help='wether to do animation or no')
+                        help='whether to do animation or no')
     parser.add_argument('--debug_plot', type=bool,
                         default=False,
                         help='wether to do the full debugging plot')
@@ -309,6 +311,9 @@ def sample_parse():
                         default=None,
                         help='which phrase to generate')
     parser.add_argument('--random_speaker', type=bool,
+                        default=False,
+                        help='generate with random speaker')
+    parser.add_argument('--plot_raw', type=bool,
                         default=False,
                         help='generate with random speaker')
 

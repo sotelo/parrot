@@ -10,4 +10,6 @@ NOTE: The code is currently being refactored/cleaned/documented. We wanted to ma
 
 NOTE(2): The code for the neural vocoder is based on [sampleRNN](https://github.com/soroushmehr/sampleRNN_ICLR2017).
 
-Update: SampleRNN modules added
+Updates:
+* SampleRNN modules added
+* End-to-end model can generate more than 4s of audio in 1s on p6000 gpu. (This is achieved by generating 200 samples of length 10s in a single batch. Total time taken for this is 448 seconds.)

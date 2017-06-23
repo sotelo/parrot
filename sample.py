@@ -8,7 +8,7 @@ import os
 import cPickle
 import logging
 
-from blocks.serialization import load_parameters
+from blocks.serialization import load as load_parameters
 from blocks.model import Model
 
 from datasets import parrot_stream

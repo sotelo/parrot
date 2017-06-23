@@ -1,5 +1,4 @@
-from blocks.bricks import (
-    Initializable, Linear, Random)
+from blocks.bricks import (Initializable, Linear, Random)
 from blocks.bricks.base import lazy, application
 from blocks.bricks.lookup import LookupTable
 from blocks.bricks.parallel import Fork

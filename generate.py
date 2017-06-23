@@ -3,6 +3,8 @@ import os
 import subprocess
 
 import logging
+import sys
+sys.path.insert(1, './merlin')
 from io_funcs.binary_io import BinaryIOCollection
 
 
